@@ -48,6 +48,7 @@ public class HunterEntity extends Monster {
     private float damageTaken;
     private long captureStartedAt;
     private boolean rewardGranted;
+    private Vec3 departureDirection = new Vec3(0.0D, 0.0D, 1.0D);
 
     public HunterEntity(EntityType<? extends Monster> type, Level level) {
         super(type, level);
@@ -57,7 +58,7 @@ public class HunterEntity extends Monster {
     public static AttributeSupplier.Builder createAttributes() {
         return Mob.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, 10000.0D)
-                .add(Attributes.MOVEMENT_SPEED, 0.15D)
+                .add(Attributes.MOVEMENT_SPEED, 0.20D)
                 .add(Attributes.ATTACK_DAMAGE, 0.0D)
                 .add(Attributes.FOLLOW_RANGE, 128.0D)
                 .add(Attributes.KNOCKBACK_RESISTANCE, 1.0D);
@@ -113,7 +114,7 @@ public class HunterEntity extends Monster {
             shakeTicks++;
             if (shakeTicks >= 12) entityData.set(SHAKE, false);
         }
-        if (phase != ESCAPE && (target == null || !target.isAlive())) {
+        if (phase != ESCAPE && phase != WALK_AWAY && (target == null || !target.isAlive())) {
             stopMusic();
             discard();
             return;
@@ -177,13 +178,23 @@ public class HunterEntity extends Monster {
 
         if (phase == ESCAPE) {
             phaseTicks++;
-            if (phaseTicks >= 1) discard();
+            getNavigation().stop();
+            if (target == null || !target.isAlive()) {
+                discard();
+            } else if (phaseTicks >= 40) {
+                walkAwayFrom(target);
+            }
             return;
         }
 
         if (phase == WALK_AWAY) {
             phaseTicks++;
-            if (phaseTicks >= 60 || getNavigation().isDone()) {
+            getNavigation().stop();
+            setYRot((float) (Math.atan2(-departureDirection.x, departureDirection.z) * (180.0D / Math.PI)));
+            setYHeadRot(getYRot());
+            Vec3 motion = getDeltaMovement();
+            setDeltaMovement(departureDirection.x * 0.12D, motion.y, departureDirection.z * 0.12D);
+            if (phaseTicks >= 80) {
                 setInvisible(true);
                 discard();
             }
@@ -197,7 +208,7 @@ public class HunterEntity extends Monster {
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
-        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.15D);
+        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.20D);
         entityData.set(SHAKE, true);
         shakeTicks = 0;
         if (target instanceof ServerPlayer serverPlayer) {
@@ -227,22 +238,23 @@ public class HunterEntity extends Monster {
     private void updateChaseSpeed() {
         double progress = Math.min(1.0D, phaseTicks / 2400.0D);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
-        if (speed != null) speed.setBaseValue(0.15D + 0.10D * progress);
+        if (speed != null) speed.setBaseValue(0.20D + 0.12D * progress);
     }
 
     private void walkAwayFrom(Player target) {
         Vec3 away = position().subtract(target.position());
         if (away.lengthSqr() < 1.0E-5D) away = new Vec3(0.0D, 0.0D, 1.0D);
         away = away.normalize();
+        departureDirection = away;
         float yaw = (float) (Math.atan2(-away.x, away.z) * (180.0D / Math.PI));
         setYRot(yaw);
         setYHeadRot(yaw);
         setTarget(null);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
-        if (speed != null) speed.setBaseValue(0.15D);
+        if (speed != null) speed.setBaseValue(0.20D);
         entityData.set(PHASE, WALK_AWAY);
         phaseTicks = 0;
-        getNavigation().moveTo(getX() + away.x * 8.0D, getY(), getZ() + away.z * 8.0D, 0.9D);
+        getNavigation().stop();
     }
 
     private void breakObstructingBlocks(Player target) {
@@ -265,10 +277,18 @@ public class HunterEntity extends Monster {
         }
         stopMusic();
         entityData.set(PHASE, ESCAPE);
-        setYRot(getYRot() + 180.0F);
-        setInvisible(true);
+        setInvisible(false);
         setInvulnerable(true);
         phaseTicks = 0;
+        Component line = Component.literal("...This isn't worth it. I'll be back.")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.RED).withItalic(true));
+        Player target = getHuntTarget();
+        if (target instanceof ServerPlayer serverPlayer) {
+            serverPlayer.connection.send(new ClientboundSetActionBarTextPacket(line));
+        } else if (target != null) {
+            target.displayClientMessage(line, true);
+        }
+        getNavigation().stop();
     }
 
     private void stopMusic() {
