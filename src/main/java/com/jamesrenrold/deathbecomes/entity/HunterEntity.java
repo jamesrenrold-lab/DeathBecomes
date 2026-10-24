@@ -39,7 +39,7 @@ public class HunterEntity extends Monster {
     private static final EntityDataAccessor<Integer> TARGET_ID = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Byte> PHASE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BYTE);
     private static final EntityDataAccessor<Boolean> SHAKE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BOOLEAN);
-    private static final byte INTRO = 0, CHASE = 1, CAPTURE = 2, DEPART = 3, ESCAPE = 4;
+    private static final byte INTRO = 0, CHASE = 1, CAPTURE = 2, DEPART = 3, ESCAPE = 4, WALK_AWAY = 5;
     private UUID targetUuid;
     private int phaseTicks;
     private int captureTicks;
@@ -56,7 +56,7 @@ public class HunterEntity extends Monster {
     public static AttributeSupplier.Builder createAttributes() {
         return Mob.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, 10000.0D)
-                .add(Attributes.MOVEMENT_SPEED, 0.13D)
+                .add(Attributes.MOVEMENT_SPEED, 0.15D)
                 .add(Attributes.ATTACK_DAMAGE, 0.0D)
                 .add(Attributes.FOLLOW_RANGE, 128.0D)
                 .add(Attributes.KNOCKBACK_RESISTANCE, 1.0D);
@@ -136,6 +136,7 @@ public class HunterEntity extends Monster {
                 discard();
                 return;
             }
+            updateChaseSpeed();
             setTarget(target);
             if (tickCount % 10 == 0) breakObstructingBlocks(target);
             if (distanceToSqr(target) <= 2.25D) startCapture(target);
@@ -147,7 +148,7 @@ public class HunterEntity extends Monster {
             target.setDeltaMovement(Vec3.ZERO);
             captureTicks++;
             if (captureTicks % 10 == 0 && target.getHealth() > 0.5F) {
-                target.setHealth(Math.max(0.5F, target.getHealth() - 0.5F));
+                target.setHealth(Math.max(0.5F, target.getHealth() - 2.0F));
             }
             if (target.getHealth() <= 0.5F) {
                 ServerPlayer serverPlayer = target instanceof ServerPlayer sp ? sp : null;
@@ -166,12 +167,9 @@ public class HunterEntity extends Monster {
             phaseTicks++;
             getNavigation().stop();
             if (phaseTicks >= 100) {
-                setYRot(getYRot() + 180.0F);
-                setYHeadRot(getYRot());
-                setInvisible(true);
                 scheduleLingeringEffects(target);
                 stopMusic();
-                discard();
+                walkAwayFrom(target);
             }
             return;
         }
@@ -179,6 +177,15 @@ public class HunterEntity extends Monster {
         if (phase == ESCAPE) {
             phaseTicks++;
             if (phaseTicks >= 1) discard();
+            return;
+        }
+
+        if (phase == WALK_AWAY) {
+            phaseTicks++;
+            if (phaseTicks >= 60 || getNavigation().isDone()) {
+                setInvisible(true);
+                discard();
+            }
         }
 
     }
@@ -189,6 +196,7 @@ public class HunterEntity extends Monster {
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
+        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.15D);
         entityData.set(SHAKE, true);
         shakeTicks = 0;
         if (target instanceof ServerPlayer serverPlayer) {
@@ -202,6 +210,7 @@ public class HunterEntity extends Monster {
         entityData.set(PHASE, CAPTURE);
         captureTicks = 0;
         captureStartedAt = level().getGameTime();
+        target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 12L * 20L);
         getNavigation().stop();
         target.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.WEAKNESS, 12 * 20, 4));
         MobEffect stun = ForgeRegistries.MOB_EFFECTS.getValue(new net.minecraft.resources.ResourceLocation("cataclysm", "stun"));
@@ -212,6 +221,27 @@ public class HunterEntity extends Monster {
     private void scheduleLingeringEffects(Player target) {
         long stunEnd = captureStartedAt + 12L * 20L;
         target.getPersistentData().putLong("DeathBecomesPendingEffectsAt", Math.max(level().getGameTime(), stunEnd));
+    }
+
+    private void updateChaseSpeed() {
+        double progress = Math.min(1.0D, phaseTicks / 2400.0D);
+        var speed = getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed != null) speed.setBaseValue(0.15D + 0.10D * progress);
+    }
+
+    private void walkAwayFrom(Player target) {
+        Vec3 away = position().subtract(target.position());
+        if (away.lengthSqr() < 1.0E-5D) away = new Vec3(0.0D, 0.0D, 1.0D);
+        away = away.normalize();
+        float yaw = (float) (Math.atan2(-away.x, away.z) * (180.0D / Math.PI));
+        setYRot(yaw);
+        setYHeadRot(yaw);
+        setTarget(null);
+        var speed = getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed != null) speed.setBaseValue(0.15D);
+        entityData.set(PHASE, WALK_AWAY);
+        phaseTicks = 0;
+        getNavigation().moveTo(getX() + away.x * 8.0D, getY(), getZ() + away.z * 8.0D, 0.9D);
     }
 
     private void breakObstructingBlocks(Player target) {

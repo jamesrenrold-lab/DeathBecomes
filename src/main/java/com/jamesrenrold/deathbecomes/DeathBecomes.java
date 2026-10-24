@@ -18,6 +18,7 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
+import net.minecraftforge.event.entity.living.LivingHealEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
@@ -28,6 +29,7 @@ import net.minecraftforge.registries.RegistryObject;
 @Mod(DeathBecomes.MOD_ID)
 public class DeathBecomes {
     public static final String MOD_ID = "deathbecomes";
+    public static final String HEAL_LOCK_KEY = "DeathBecomesHealLockedUntil";
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, MOD_ID);
     public static final DeferredRegister<SoundEvent> SOUND_EVENTS = DeferredRegister.create(ForgeRegistries.SOUND_EVENTS, MOD_ID);
 
@@ -49,6 +51,7 @@ public class DeathBecomes {
         modBus.addListener(this::registerAttributes);
         MinecraftForge.EVENT_BUS.addListener(this::registerCommands);
         MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onPlayerTick);
+        MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onLivingHeal);
         DeathBecomesNetwork.register();
     }
 
@@ -100,6 +103,17 @@ public class DeathBecomes {
             event.player.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.WEAKNESS, 45 * 20, 2));
             event.player.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN, 45 * 20, 1));
             data.remove(key);
+        }
+    }
+
+    private static void onLivingHeal(LivingHealEvent event) {
+        if (!(event.getEntity() instanceof Player player) || player.level().isClientSide) return;
+        long lockedUntil = player.getPersistentData().getLong(HEAL_LOCK_KEY);
+        if (lockedUntil == 0L) return;
+        if (player.level().getGameTime() < lockedUntil) {
+            event.setCanceled(true);
+        } else {
+            player.getPersistentData().remove(HEAL_LOCK_KEY);
         }
     }
 }
