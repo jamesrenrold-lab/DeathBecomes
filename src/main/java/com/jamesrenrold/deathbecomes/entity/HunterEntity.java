@@ -204,7 +204,7 @@ public class HunterEntity extends Monster {
         captureStartedAt = level().getGameTime();
         getNavigation().stop();
         target.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.WEAKNESS, 12 * 20, 4));
-        Mob stun = ForgeRegistries.MOB_EFFECTS.getValue(new net.minecraft.resources.ResourceLocation("cataclysm", "stun"));
+        MobEffect stun = ForgeRegistries.MOB_EFFECTS.getValue(new net.minecraft.resources.ResourceLocation("cataclysm", "stun"));
         if (stun != null) target.addEffect(new MobEffectInstance(stun, 12 * 20, 0));
         target.setHealth(Math.max(0.5F, target.getHealth() * 0.10F));
     }
