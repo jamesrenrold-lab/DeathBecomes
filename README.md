@@ -15,9 +15,9 @@ A command-only Minecraft hunter mob built around the DeathBecomes concept.
 - If it reaches its target, apply Weakness V and `cataclysm:stun` for 12 seconds. Deal a burst equal to 90% of the target's current health, then deal 0.5 damage ticks until the target is at 0.5 health; these ticks must never kill the target.
 - Once the target is at 0.5 health, show a red actionbar message: “How can you live with yourself?” Five seconds later, turn away, become invisible, and despawn without dropping a reward. After the hunter has left and the 12-second stun expires, apply Weakness III and Slowness II to the target for 45 seconds.
 
-## Initial platform assumption
+## Platform
 
-Minecraft Forge 1.20.1, matching the user's current modding environment. Confirm loader and Minecraft version when implementation begins.
+Minecraft Forge 1.20.1, matching the user's current modding environment (Forge 47.4.15, Java 17).
 
 ## Details to settle during implementation
 
@@ -25,4 +25,4 @@ Minecraft Forge 1.20.1, matching the user's current modding environment. Confirm
 - How the command selects its target and how the hunter behaves if that player logs out or dies.
 - Which blocks the hunter may break.
 
-The supplied skin reference will be added to the project assets when the entity renderer is implemented.
+The supplied skin is included as the hunter's player-model texture. The supplied chase track is converted to OGG and trimmed to the 120-second chase limit.

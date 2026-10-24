@@ -1,0 +1,7 @@
+{
+  "chase_music": {
+    "sounds": [
+      { "name": "deathbecomes:lust_for_blood", "stream": true }
+    ]
+  }
+}

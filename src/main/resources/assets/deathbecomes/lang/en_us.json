@@ -1,0 +1,6 @@
+{
+  "entity.deathbecomes.hunter": "The Hunter",
+  "item.deathbecomes.heart_fragment": "Hunter's Heart Fragment",
+  "deathbecomes.command.spawned": "The Hunter has been summoned near %s.",
+  "deathbecomes.command.failed": "Could not summon the Hunter."
+}
