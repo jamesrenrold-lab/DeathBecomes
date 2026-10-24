@@ -10,7 +10,7 @@ A command-only Minecraft hunter mob built around the DeathBecomes concept.
 - Have 10,000 health.
 - If it takes 500 damage during the chase, stop pursuing, turn away, become invisible, and despawn. Leave a consumable reward that permanently increases the user's maximum health by 1 HP when used.
 - If it reaches its target, apply Weakness V and `cataclysm:stun` for 12 seconds. Deal a burst equal to 90% of the target's current health, then deal 0.5 damage ticks until the target is at 0.5 health; these ticks must never kill the target.
-- Once the target is at 0.5 health, show a red actionbar message: “How can you live with yourself?” Five seconds later, turn away, become invisible, and despawn without dropping a reward.
+- Once the target is at 0.5 health, show a red actionbar message: “How can you live with yourself?” Five seconds later, turn away, become invisible, and despawn without dropping a reward. After the hunter has left and the 12-second stun expires, apply Weakness III and Slowness II to the target for 45 seconds.
 
 ## Initial platform assumption
 
