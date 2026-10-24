@@ -1,5 +1,6 @@
 package com.jamesrenrold.deathbecomes.entity;
 
+import com.jamesrenrold.deathbecomes.DeathBecomes;
 import com.jamesrenrold.deathbecomes.item.ModItems;
 import com.jamesrenrold.deathbecomes.network.DeathBecomesNetwork;
 import net.minecraft.core.BlockPos;
