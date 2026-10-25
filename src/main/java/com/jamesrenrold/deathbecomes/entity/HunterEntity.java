@@ -11,7 +11,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Style;
 import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
-import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -39,13 +38,15 @@ import net.minecraftforge.registries.ForgeRegistries;
 import org.joml.Vector3f;
 
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 public class HunterEntity extends Monster {
     private static final EntityDataAccessor<Integer> TARGET_ID = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Byte> PHASE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BYTE);
     private static final EntityDataAccessor<Boolean> SHAKE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BOOLEAN);
     private static final byte INTRO = 0, CHASE = 1, CAPTURE = 2, DEPART = 3, ESCAPE = 4, WALK_AWAY = 5,
-            COUNTERATTACK = 6;
+            COUNTERATTACK = 6, THROW = 7;
     private UUID targetUuid;
     private int phaseTicks;
     private int captureTicks;
@@ -69,6 +70,14 @@ public class HunterEntity extends Monster {
     private int quickRampTicks = -1;
     private boolean speedRampAtMaximum;
     private int counterRecoveryTicks;
+    private int throwTicks;
+    private double throwStartX;
+    private double throwStartY;
+    private double throwStartZ;
+    private double throwEndX;
+    private double throwEndY;
+    private double throwEndZ;
+    private final List<BlockPos> temporaryBoneWall = new ArrayList<>();
 
     public HunterEntity(EntityType<? extends Monster> type, Level level) {
         super(type, level);
@@ -138,6 +147,7 @@ public class HunterEntity extends Monster {
         }
         if (phase != ESCAPE && phase != WALK_AWAY && (target == null || !target.isAlive())) {
             stopMusic();
+            removeTemporaryBoneWall();
             discard();
             return;
         }
@@ -216,7 +226,24 @@ public class HunterEntity extends Monster {
             target.setDeltaMovement(Vec3.ZERO);
             target.setSprinting(false);
             counterWindowTicks--;
-            if (counterWindowTicks <= 0) throwTargetAndResumeChase(target);
+            if (counterWindowTicks <= 0) beginThrow(target);
+            return;
+        }
+
+        if (phase == THROW) {
+            getNavigation().stop();
+            throwTicks++;
+            double progress = Math.min(1.0D, throwTicks / 8.0D);
+            target.setPos(throwStartX + (throwEndX - throwStartX) * progress,
+                    throwStartY + (throwEndY - throwStartY) * progress,
+                    throwStartZ + (throwEndZ - throwStartZ) * progress);
+            target.setDeltaMovement(Vec3.ZERO);
+            target.setSprinting(false);
+            target.fallDistance = 0.0F;
+            if (throwTicks >= 8) {
+                removeTemporaryBoneWall();
+                resumeChaseAfterThrow(target);
+            }
             return;
         }
 
@@ -315,6 +342,9 @@ public class HunterEntity extends Monster {
         entityData.set(PHASE, COUNTERATTACK);
         phaseTicks = 0;
         setInvulnerable(false);
+        var speed = getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed != null) speed.setBaseValue(0.0D);
+        showActionbar(target, "You'll run out of energy soon enough.");
     }
 
     private void beginFinalCapture(Player target) {
@@ -343,19 +373,36 @@ public class HunterEntity extends Monster {
         target.getPersistentData().putLong("DeathBecomesPendingEffectsAt", Math.max(level().getGameTime(), stunEnd));
     }
 
-    private void throwTargetAndResumeChase(Player target) {
+    private void beginThrow(Player target) {
         Vec3 direction = new Vec3(target.getX() - getX(), 0.0D, target.getZ() - getZ());
         if (direction.lengthSqr() < 1.0E-5D) direction = new Vec3(0.0D, 0.0D, 1.0D);
         direction = direction.normalize();
-        createBoneWallIfNeeded(target, direction);
+        double wallDistance = findWallDistance(target, direction);
+        if (wallDistance < 0.0D) {
+            wallDistance = 3.5D;
+            createTemporaryBoneWall(target, direction, wallDistance);
+        }
 
         target.setHealth(Math.max(0.5F, target.getHealth() * 0.60F));
-        target.setDeltaMovement(direction.x * 1.25D, 0.48D, direction.z * 1.25D);
-        if (target instanceof ServerPlayer serverPlayer) {
-            serverPlayer.connection.send(new ClientboundSetEntityMotionPacket(serverPlayer));
-        }
+        throwStartX = target.getX();
+        throwStartY = target.getY();
+        throwStartZ = target.getZ();
+        double throwDistance = Math.max(0.2D, wallDistance - 0.8D);
+        throwEndX = throwStartX + direction.x * throwDistance;
+        throwEndY = throwStartY + 0.1D;
+        throwEndZ = throwStartZ + direction.z * throwDistance;
+        throwTicks = 0;
         scheduleLingeringEffects(target);
-        showActionbar(target, "You'll run out of energy soon enough.");
+        entityData.set(PHASE, THROW);
+        phaseTicks = 0;
+        setTarget(null);
+        setInvulnerable(true);
+        var speed = getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed != null) speed.setBaseValue(0.0D);
+        getNavigation().stop();
+    }
+
+    private void resumeChaseAfterThrow(Player target) {
         quickRampTicks = 0;
         speedRampAtMaximum = false;
         counterRecoveryTicks = 20;
@@ -367,28 +414,42 @@ public class HunterEntity extends Monster {
         getNavigation().stop();
     }
 
-    private void createBoneWallIfNeeded(Player target, Vec3 direction) {
+    private double findWallDistance(Player target, Vec3 direction) {
         for (int distance = 1; distance <= 7; distance++) {
             for (int height = 0; height < 3; height++) {
                 BlockPos probe = BlockPos.containing(target.getX() + direction.x * distance,
                         target.getY() + height + 0.2D, target.getZ() + direction.z * distance);
-                if (!level().getBlockState(probe).getCollisionShape(level(), probe).isEmpty()) return;
+                if (!level().getBlockState(probe).getCollisionShape(level(), probe).isEmpty()) return distance;
             }
         }
+        return -1.0D;
+    }
 
+    private void createTemporaryBoneWall(Player target, Vec3 direction, double distance) {
         Vec3 side = new Vec3(-direction.z, 0.0D, direction.x);
-        double wallX = target.getX() + direction.x * 3.5D;
-        double wallZ = target.getZ() + direction.z * 3.5D;
+        double wallX = target.getX() + direction.x * distance;
+        double wallZ = target.getZ() + direction.z * distance;
         for (int lateral = -1; lateral <= 1; lateral++) {
             BlockPos base = BlockPos.containing(wallX + side.x * lateral, target.getY(), wallZ + side.z * lateral);
             for (int height = 0; height < 3; height++) {
                 BlockPos pos = base.above(height);
                 var state = level().getBlockState(pos);
                 if (state.isAir() || state.canBeReplaced()) {
-                    level().setBlockAndUpdate(pos, Blocks.BONE_BLOCK.defaultBlockState());
+                    if (level().setBlockAndUpdate(pos, Blocks.BONE_BLOCK.defaultBlockState())) {
+                        temporaryBoneWall.add(pos.immutable());
+                    }
                 }
             }
         }
+    }
+
+    private void removeTemporaryBoneWall() {
+        for (BlockPos pos : temporaryBoneWall) {
+            if (level().getBlockState(pos).is(Blocks.BONE_BLOCK)) {
+                level().setBlockAndUpdate(pos, Blocks.AIR.defaultBlockState());
+            }
+        }
+        temporaryBoneWall.clear();
     }
 
     private void updateChaseSpeed() {
