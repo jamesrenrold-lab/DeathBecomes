@@ -178,7 +178,7 @@ public class HunterEntity extends Monster {
             setTarget(target);
             if (counterRecoveryTicks > 0) counterRecoveryTicks--;
             faceTarget(target);
-            boolean elevatedTarget = target.getY() > getY() + 1.2D;
+            boolean elevatedTarget = target.getY() >= getY() + 2.0D;
             clearBlocksInPath(target);
             if (elevatedTarget) {
                 climbing = true;
