@@ -73,6 +73,8 @@ public class HunterEntity extends Monster {
     private double throwEndX;
     private double throwEndY;
     private double throwEndZ;
+    private double throwVelocityX;
+    private double throwVelocityZ;
     private final Map<BlockPos, net.minecraft.world.level.block.state.BlockState> temporaryBoneWall = new HashMap<>();
 
     public HunterEntity(EntityType<? extends Monster> type, Level level) {
@@ -180,7 +182,7 @@ public class HunterEntity extends Monster {
             clearBlocksInPath(target);
             if (elevatedTarget) {
                 climbing = true;
-                if (!hasClimbSurface(target)) createBoneClimbColumn(target);
+                if (!hasClimbSurface(target)) createBoneClimbStep(target);
                 climbToward(target);
             } else {
                 climbing = false;
@@ -220,26 +222,27 @@ public class HunterEntity extends Monster {
 
         if (phase == THROW) {
             getNavigation().stop();
-            if (throwTicks < 12) {
-                throwTicks++;
-                double progress = Math.min(1.0D, throwTicks / 12.0D);
-                double arc = Math.sin(progress * Math.PI) * 0.9D;
-                double desiredX = throwStartX + (throwEndX - throwStartX) * progress;
-                double desiredY = throwStartY + (throwEndY - throwStartY) * progress + arc;
-                double desiredZ = throwStartZ + (throwEndZ - throwStartZ) * progress;
-                // Resolve each throw step against blocks so the player collides with
-                // the wall instead of being teleported through or short of it.
-                target.move(MoverType.SELF, new Vec3(desiredX - target.getX(),
-                        desiredY - target.getY(), desiredZ - target.getZ()));
-            } else if (wallHoldTicks > 0) {
-                wallHoldTicks--;
-            }
-            target.setDeltaMovement(Vec3.ZERO);
             target.setSprinting(false);
             target.fallDistance = 0.0F;
-            if (throwTicks >= 12 && (temporaryBoneWall.isEmpty() || wallHoldTicks <= 0)) {
-                removeTemporaryBoneWall();
-                resumeChaseAfterThrow(target);
+            if (throwTicks < 12) {
+                // Give the player real forward momentum so the throw visibly carries
+                // them into the wall. Keep refreshing it during the short launch window
+                // to prevent client input from cancelling the forced throw.
+                throwTicks++;
+                target.setDeltaMovement(throwVelocityX * 1.35D, 0.28D, throwVelocityZ * 1.35D);
+                target.hurtMarked = true;
+                if (throwTicks == 12) {
+                    forcePlayerToThrowImpact(target);
+                    wallHoldTicks = 40;
+                }
+            } else {
+                target.setPos(throwEndX, throwEndY, throwEndZ);
+                target.setDeltaMovement(Vec3.ZERO);
+                if (wallHoldTicks > 0) wallHoldTicks--;
+                if (wallHoldTicks <= 0) {
+                    removeTemporaryBoneWall();
+                    resumeChaseAfterThrow(target);
+                }
             }
             return;
         }
@@ -382,13 +385,25 @@ public class HunterEntity extends Monster {
         throwStartX = target.getX();
         throwStartY = target.getY();
         throwStartZ = target.getZ();
-        // Aim through the wall plane so collision resolution stops the player against its face.
-        double throwDistance = wallDistance + 0.75D;
-        throwEndX = throwStartX + direction.x * throwDistance;
-        throwEndY = throwStartY + 0.1D;
-        throwEndZ = throwStartZ + direction.z * throwDistance;
+        BlockPos wallCenter = BlockPos.containing(target.getX() + direction.x * wallDistance,
+                target.getY(), target.getZ() + direction.z * wallDistance);
+        throwEndX = wallCenter.getX() + 0.5D;
+        throwEndY = target.getY();
+        throwEndZ = wallCenter.getZ() + 0.5D;
+        double playerHalfWidth = target.getBbWidth() * 0.5D + 0.02D;
+        if (Math.abs(direction.x) > Math.abs(direction.z)) {
+            double wallFaceX = direction.x > 0.0D ? wallCenter.getX() : wallCenter.getX() + 1.0D;
+            throwEndX = wallFaceX - Math.signum(direction.x) * playerHalfWidth;
+            throwVelocityX = direction.x;
+            throwVelocityZ = direction.z;
+        } else {
+            double wallFaceZ = direction.z > 0.0D ? wallCenter.getZ() : wallCenter.getZ() + 1.0D;
+            throwEndZ = wallFaceZ - Math.signum(direction.z) * playerHalfWidth;
+            throwVelocityX = direction.x;
+            throwVelocityZ = direction.z;
+        }
         throwTicks = 0;
-        wallHoldTicks = temporaryBoneWall.isEmpty() ? 0 : 40;
+        wallHoldTicks = 0;
         entityData.set(PHASE, THROW);
         phaseTicks = 0;
         setTarget(null);
@@ -396,6 +411,15 @@ public class HunterEntity extends Monster {
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
         if (speed != null) speed.setBaseValue(0.0D);
         getNavigation().stop();
+    }
+
+    private void forcePlayerToThrowImpact(Player target) {
+        target.setPos(throwEndX, throwEndY, throwEndZ);
+        target.setDeltaMovement(Vec3.ZERO);
+        if (target instanceof ServerPlayer serverPlayer) {
+            serverPlayer.connection.teleport(throwEndX, throwEndY, throwEndZ,
+                    target.getYRot(), target.getXRot());
+        }
     }
 
     private void resumeChaseAfterThrow(Player target) {
@@ -521,8 +545,9 @@ public class HunterEntity extends Monster {
         Vec3 toward = target.position().subtract(position());
         Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
         if (horizontal.lengthSqr() > 1.0E-5D) horizontal = horizontal.normalize();
-        double verticalStep = Math.min(0.90D, Math.max(0.55D, target.getY() - getY()));
-        move(MoverType.SELF, new Vec3(horizontal.x * 0.08D, verticalStep, horizontal.z * 0.08D));
+        double verticalStep = Math.min(1.0D, Math.max(0.65D, target.getY() - getY()));
+        double forwardStep = getAttributeValue(Attributes.MOVEMENT_SPEED) * 1.3D;
+        move(MoverType.SELF, new Vec3(horizontal.x * forwardStep, verticalStep, horizontal.z * forwardStep));
         setDeltaMovement(Vec3.ZERO);
     }
 
@@ -563,24 +588,20 @@ public class HunterEntity extends Monster {
         }
     }
 
-    private void createBoneClimbColumn(Player target) {
+    private void createBoneClimbStep(Player target) {
         Vec3 toward = target.position().subtract(position());
         Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
         if (horizontal.lengthSqr() < 1.0E-5D) return;
         horizontal = horizontal.normalize();
         int feetY = (int) Math.floor(getY());
-        int height = Math.min(12, Math.max(2, (int) Math.ceil(target.getY() - getY()) + 1));
-        BlockPos column = BlockPos.containing(getX() + horizontal.x * (getBbWidth() * 0.5D + 0.45D),
-                feetY, getZ() + horizontal.z * (getBbWidth() * 0.5D + 0.45D));
-        for (int y = 0; y < height; y++) {
-            BlockPos pos = column.above(y);
-            if (level().getBlockEntity(pos) != null || temporaryBoneWall.containsKey(pos)) continue;
-            var state = level().getBlockState(pos);
-            if (state.isAir() || state.getCollisionShape(level(), pos).isEmpty()) {
-                if (level().setBlockAndUpdate(pos, Blocks.BONE_BLOCK.defaultBlockState())) {
-                    temporaryBoneWall.put(pos.immutable(), state);
-                }
-            }
+        double stepDistance = getBbWidth() * 0.5D + 0.65D;
+        BlockPos pos = BlockPos.containing(getX() + horizontal.x * stepDistance,
+                feetY, getZ() + horizontal.z * stepDistance);
+        if (level().getBlockEntity(pos) != null || temporaryBoneWall.containsKey(pos)) return;
+        var state = level().getBlockState(pos);
+        if ((state.isAir() || state.getCollisionShape(level(), pos).isEmpty())
+                && level().setBlockAndUpdate(pos, Blocks.BONE_BLOCK.defaultBlockState())) {
+            temporaryBoneWall.put(pos.immutable(), state);
         }
     }
 
