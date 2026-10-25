@@ -85,7 +85,7 @@ public class HunterEntity extends Monster {
     public static AttributeSupplier.Builder createAttributes() {
         return Mob.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, 10000.0D)
-                .add(Attributes.MOVEMENT_SPEED, 0.18D)
+                .add(Attributes.MOVEMENT_SPEED, 0.16D)
                 .add(Attributes.ATTACK_DAMAGE, 0.0D)
                 .add(Attributes.FOLLOW_RANGE, 128.0D)
                 .add(Attributes.KNOCKBACK_RESISTANCE, 1.0D);
@@ -302,7 +302,7 @@ public class HunterEntity extends Monster {
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
-        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.18D);
+        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.16D);
         counterRecoveryTicks = 0;
         climbing = false;
         setGlowingTag(false);
@@ -504,18 +504,18 @@ public class HunterEntity extends Monster {
         if (quickRampTicks >= 0) {
             int elapsed = quickRampTicks++;
             if (elapsed < 20) {
-                chaseSpeed = 0.18D;
+                chaseSpeed = 0.16D;
             } else {
-                chaseSpeed = 0.18D + 0.10D * Math.min(1.0D, (elapsed - 20) / 200.0D);
+                chaseSpeed = 0.16D + 0.10D * Math.min(1.0D, (elapsed - 20) / 200.0D);
                 if (elapsed >= 220) {
                     quickRampTicks = -1;
                     speedRampAtMaximum = true;
                 }
             }
         } else if (speedRampAtMaximum) {
-            chaseSpeed = 0.28D;
+            chaseSpeed = 0.26D;
         } else {
-            chaseSpeed = 0.18D + 0.10D * progress;
+            chaseSpeed = 0.16D + 0.10D * progress;
         }
         if (speed != null) speed.setBaseValue(chaseSpeed * heartMultiplier);
     }
