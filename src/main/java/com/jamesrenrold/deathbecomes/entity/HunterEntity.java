@@ -230,6 +230,7 @@ public class HunterEntity extends Monster {
             target.setDeltaMovement(Vec3.ZERO);
             target.setSprinting(false);
             counterWindowTicks--;
+            if (counterWindowTicks == 60) showActionbar(target, "You'll run out of energy soon enough.");
             if (counterWindowTicks <= 0) beginThrow(target);
             return;
         }
@@ -237,14 +238,14 @@ public class HunterEntity extends Monster {
         if (phase == THROW) {
             getNavigation().stop();
             throwTicks++;
-            double progress = Math.min(1.0D, throwTicks / 8.0D);
+            double progress = Math.min(1.0D, throwTicks / 12.0D);
             target.setPos(throwStartX + (throwEndX - throwStartX) * progress,
                     throwStartY + (throwEndY - throwStartY) * progress,
                     throwStartZ + (throwEndZ - throwStartZ) * progress);
             target.setDeltaMovement(Vec3.ZERO);
             target.setSprinting(false);
             target.fallDistance = 0.0F;
-            if (throwTicks >= 8) {
+            if (throwTicks >= 12) {
                 removeTemporaryBoneWall();
                 resumeChaseAfterThrow(target);
             }
@@ -332,13 +333,14 @@ public class HunterEntity extends Monster {
 
     private void beginCounterattack(Player target) {
         counterCatchCount++;
-        counterWindowTicks = 60;
+        counterWindowTicks = 80;
         counterX = target.getX();
         counterY = target.getY();
         counterZ = target.getZ();
         captureStartedAt = level().getGameTime();
         target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 12L * 20L);
         DeathBecomes.applyManaDebuff(target);
+        target.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN, 4 * 20, 4));
         target.setSprinting(false);
         target.setDeltaMovement(Vec3.ZERO);
         setTarget(null);
@@ -348,7 +350,6 @@ public class HunterEntity extends Monster {
         setInvulnerable(false);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
         if (speed != null) speed.setBaseValue(0.0D);
-        showActionbar(target, "You'll run out of energy soon enough.");
     }
 
     private void beginFinalCapture(Player target) {
@@ -381,13 +382,13 @@ public class HunterEntity extends Monster {
         Vec3 direction = new Vec3(target.getX() - getX(), 0.0D, target.getZ() - getZ());
         if (direction.lengthSqr() < 1.0E-5D) direction = new Vec3(0.0D, 0.0D, 1.0D);
         direction = direction.normalize();
+        target.setHealth(Math.max(0.5F, target.getHealth() * 0.60F));
         double wallDistance = findWallDistance(target, direction);
         if (wallDistance < 0.0D) {
-            wallDistance = 3.5D;
+            wallDistance = 8.0D;
             createTemporaryBoneWall(target, direction, wallDistance);
         }
 
-        target.setHealth(Math.max(0.5F, target.getHealth() * 0.60F));
         throwStartX = target.getX();
         throwStartY = target.getY();
         throwStartZ = target.getZ();
@@ -418,7 +419,7 @@ public class HunterEntity extends Monster {
     }
 
     private double findWallDistance(Player target, Vec3 direction) {
-        for (int distance = 1; distance <= 7; distance++) {
+        for (int distance = 5; distance <= 10; distance++) {
             for (int height = 0; height < 3; height++) {
                 BlockPos probe = BlockPos.containing(target.getX() + direction.x * distance,
                         target.getY() + height + 0.2D, target.getZ() + direction.z * distance);
