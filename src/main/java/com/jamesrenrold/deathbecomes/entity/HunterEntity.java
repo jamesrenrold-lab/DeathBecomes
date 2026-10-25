@@ -335,6 +335,8 @@ public class HunterEntity extends Monster {
         captureStartedAt = level().getGameTime();
         target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 12L * 20L);
         DeathBecomes.applyManaDebuff(target);
+        target.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.WEAKNESS, 45 * 20, 2));
+        target.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN, 45 * 20, 1));
         target.setSprinting(false);
         target.setDeltaMovement(Vec3.ZERO);
         setTarget(null);
@@ -392,7 +394,6 @@ public class HunterEntity extends Monster {
         throwEndY = throwStartY + 0.1D;
         throwEndZ = throwStartZ + direction.z * throwDistance;
         throwTicks = 0;
-        scheduleLingeringEffects(target);
         entityData.set(PHASE, THROW);
         phaseTicks = 0;
         setTarget(null);
