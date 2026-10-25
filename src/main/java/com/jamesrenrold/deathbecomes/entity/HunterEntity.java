@@ -382,8 +382,8 @@ public class HunterEntity extends Monster {
         throwStartX = target.getX();
         throwStartY = target.getY();
         throwStartZ = target.getZ();
-        // Target the wall plane; collision-resolved movement forces a direct impact.
-        double throwDistance = Math.max(0.2D, wallDistance - 0.15D);
+        // Aim through the wall plane so collision resolution stops the player against its face.
+        double throwDistance = wallDistance + 0.75D;
         throwEndX = throwStartX + direction.x * throwDistance;
         throwEndY = throwStartY + 0.1D;
         throwEndZ = throwStartZ + direction.z * throwDistance;
@@ -532,7 +532,7 @@ public class HunterEntity extends Monster {
         Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
         if (horizontal.lengthSqr() < 1.0E-5D) return;
         horizontal = horizontal.normalize();
-        double speed = getAttributeValue(Attributes.MOVEMENT_SPEED) * 2.4D;
+        double speed = getAttributeValue(Attributes.MOVEMENT_SPEED) * 1.3D;
         Vec3 existing = getDeltaMovement();
         move(MoverType.SELF, new Vec3(horizontal.x * speed, existing.y, horizontal.z * speed));
         setDeltaMovement(0.0D, getDeltaMovement().y, 0.0D);
