@@ -17,6 +17,7 @@ import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
@@ -24,6 +25,7 @@ import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.event.entity.living.LivingHealEvent;
+import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.ModList;
@@ -34,6 +36,7 @@ import net.minecraftforge.registries.RegistryObject;
 
 import java.lang.reflect.Method;
 import java.util.UUID;
+import java.util.Locale;
 
 @Mod(DeathBecomes.MOD_ID)
 public class DeathBecomes {
@@ -65,6 +68,8 @@ public class DeathBecomes {
         MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onPlayerTick);
         MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onPlayerClone);
         MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onLivingHeal);
+        MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onRightClickItem);
+        MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onRightClickBlock);
         DeathBecomesNetwork.register();
     }
 
@@ -125,6 +130,36 @@ public class DeathBecomes {
             removeManaDebuff(event.player);
             data.remove(MANA_DEBUFF_KEY);
         }
+
+        if (isInHunterChase(event.player) && event.player.isFallFlying()) {
+            event.player.stopFallFlying();
+        }
+    }
+
+    private static void onRightClickItem(PlayerInteractEvent.RightClickItem event) {
+        cancelWarpStoneUse(event, event.getItemStack());
+    }
+
+    private static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
+        cancelWarpStoneUse(event, event.getItemStack());
+    }
+
+    private static void cancelWarpStoneUse(PlayerInteractEvent event, ItemStack stack) {
+        Player player = event.getEntity();
+        if (player.level().isClientSide || !isInHunterChase(player) || !isWarpStone(stack)) return;
+        event.setCanceled(true);
+    }
+
+    private static boolean isWarpStone(ItemStack stack) {
+        ResourceLocation itemId = ForgeRegistries.ITEMS.getKey(stack.getItem());
+        String registryId = itemId == null ? "" : itemId.toString().toLowerCase(Locale.ROOT);
+        String itemName = stack.getHoverName().getString().toLowerCase(Locale.ROOT);
+        return (registryId.contains("warp") && registryId.contains("stone")) || itemName.contains("warp stone");
+    }
+
+    private static boolean isInHunterChase(Player player) {
+        return !player.level().getEntitiesOfClass(HunterEntity.class,
+                player.getBoundingBox().inflate(128.0D), hunter -> hunter.restrictsEscapeAbilities(player)).isEmpty();
     }
 
     public static void applyManaDebuff(Player player) {
