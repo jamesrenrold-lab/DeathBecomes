@@ -59,6 +59,7 @@ public class HunterEntity extends Monster {
     private boolean captureHadHeart;
     private boolean killAfterStare;
     private boolean climbing;
+    private int climbAttemptTicks;
     private int leapWindupTicks;
     private int leapFlightTicks;
     private int leapCooldownTicks;
@@ -203,11 +204,27 @@ public class HunterEntity extends Monster {
                 if (directClimbPath) {
                     climbing = true;
                     climbToward(target);
+                } else if (navigablePath) {
+                    // Let navigation reach the base of an elevated route before a leap.
+                    climbAttemptTicks = 0;
+                    climbing = false;
+                    getNavigation().moveTo(target, 1.0D);
+                } else if (climbAttemptTicks < 40) {
+                    // Probe for a climbable face for two seconds before considering a leap.
+                    climbAttemptTicks++;
+                    if (hasClimbSurface(target)) {
+                        climbing = true;
+                        climbToward(target);
+                    } else {
+                        climbing = false;
+                        getNavigation().moveTo(target, 1.0D);
+                    }
                 } else {
                     climbing = false;
                     if (shouldLeap && leapCooldownTicks <= 0) beginLeapWindup();
                 }
             } else {
+                climbAttemptTicks = 0;
                 climbing = false;
                 leapWindupTicks = 0;
                 setGlowingTag(false);
@@ -249,9 +266,13 @@ public class HunterEntity extends Monster {
                 throwTicks++;
                 double progress = Math.min(1.0D, throwTicks / 12.0D);
                 double arc = Math.sin(progress * Math.PI) * 0.9D;
-                target.setPos(throwStartX + (throwEndX - throwStartX) * progress,
-                        throwStartY + (throwEndY - throwStartY) * progress + arc,
-                        throwStartZ + (throwEndZ - throwStartZ) * progress);
+                double desiredX = throwStartX + (throwEndX - throwStartX) * progress;
+                double desiredY = throwStartY + (throwEndY - throwStartY) * progress + arc;
+                double desiredZ = throwStartZ + (throwEndZ - throwStartZ) * progress;
+                // Resolve each throw step against blocks so the player collides with
+                // the wall instead of being teleported through or short of it.
+                target.move(MoverType.SELF, new Vec3(desiredX - target.getX(),
+                        desiredY - target.getY(), desiredZ - target.getZ()));
             } else if (wallHoldTicks > 0) {
                 wallHoldTicks--;
             }
@@ -397,7 +418,7 @@ public class HunterEntity extends Monster {
         if (direction.lengthSqr() < 1.0E-5D) direction = new Vec3(0.0D, 0.0D, 1.0D);
         direction = direction.normalize();
         target.setHealth(Math.max(0.5F, target.getHealth() * 0.60F));
-        double wallDistance = findThreeByTwoWallDistance(target, direction);
+        double wallDistance = findThreeByFourWallDistance(target, direction);
         if (wallDistance < 0.0D) {
             wallDistance = 8.0D;
             createTemporaryBoneWall(target, direction, wallDistance);
@@ -406,7 +427,8 @@ public class HunterEntity extends Monster {
         throwStartX = target.getX();
         throwStartY = target.getY();
         throwStartZ = target.getZ();
-        double throwDistance = Math.max(0.2D, wallDistance - 0.8D);
+        // Target the wall plane; collision-resolved movement forces a direct impact.
+        double throwDistance = Math.max(0.2D, wallDistance - 0.15D);
         throwEndX = throwStartX + direction.x * throwDistance;
         throwEndY = throwStartY + 0.1D;
         throwEndZ = throwStartZ + direction.z * throwDistance;
@@ -441,13 +463,13 @@ public class HunterEntity extends Monster {
         };
     }
 
-    private double findThreeByTwoWallDistance(Player target, Vec3 direction) {
-        Vec3 side = new Vec3(-direction.z, 0.0D, direction.x);
+    private double findThreeByFourWallDistance(Player target, Vec3 direction) {
+        Vec3 side = boneWallSide(direction);
         for (int distance = 5; distance <= 10; distance++) {
             int solidBlocks = 0;
             java.util.Set<BlockPos> checked = new java.util.HashSet<>();
             for (int lateral = -1; lateral <= 1; lateral++) {
-                for (int height = 0; height < 2; height++) {
+                for (int height = 0; height < 4; height++) {
                     BlockPos probe = BlockPos.containing(target.getX() + direction.x * distance + side.x * lateral,
                             target.getY() + height + 0.2D,
                             target.getZ() + direction.z * distance + side.z * lateral);
@@ -456,18 +478,24 @@ public class HunterEntity extends Monster {
                     }
                 }
             }
-            if (solidBlocks >= 5) return distance;
+            if (solidBlocks >= 12) return distance;
         }
         return -1.0D;
     }
 
+    private Vec3 boneWallSide(Vec3 direction) {
+        return Math.abs(direction.x) > Math.abs(direction.z)
+                ? new Vec3(0.0D, 0.0D, 1.0D)
+                : new Vec3(1.0D, 0.0D, 0.0D);
+    }
+
     private void createTemporaryBoneWall(Player target, Vec3 direction, double distance) {
-        Vec3 side = new Vec3(-direction.z, 0.0D, direction.x);
+        Vec3 side = boneWallSide(direction);
         double wallX = target.getX() + direction.x * distance;
         double wallZ = target.getZ() + direction.z * distance;
         for (int lateral = -1; lateral <= 1; lateral++) {
-            BlockPos base = BlockPos.containing(wallX + side.x * lateral, target.getY(), wallZ + side.z * lateral);
-            for (int height = 0; height < 2; height++) {
+            BlockPos base = BlockPos.containing(wallX + side.x * lateral, target.getBlockY(), wallZ + side.z * lateral);
+            for (int height = 0; height < 4; height++) {
                 BlockPos pos = base.above(height);
                 var state = level().getBlockState(pos);
                 if (level().getBlockEntity(pos) == null && level().setBlockAndUpdate(pos, Blocks.BONE_BLOCK.defaultBlockState())) {
@@ -514,6 +542,12 @@ public class HunterEntity extends Monster {
     }
 
     private boolean hasDirectClimbPath(Player target) {
+        if (!hasClimbSurface(target)) return false;
+        AABB raisedBox = getBoundingBox().move(0.0D, 0.48D, 0.0D);
+        return level().noCollision(this, raisedBox);
+    }
+
+    private boolean hasClimbSurface(Player target) {
         Vec3 toward = target.position().subtract(position());
         Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
         if (horizontal.lengthSqr() < 1.0E-5D) return false;
@@ -529,8 +563,7 @@ public class HunterEntity extends Monster {
                 break;
             }
         }
-        AABB raisedBox = getBoundingBox().move(0.0D, 0.48D, 0.0D);
-        return hasWall && level().noCollision(this, raisedBox);
+        return hasWall;
     }
 
     private boolean hasNavigablePath(Player target) {
