@@ -26,6 +26,7 @@ import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.event.entity.living.LivingHealEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
+import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.ModList;
@@ -70,6 +71,7 @@ public class DeathBecomes {
         MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onLivingHeal);
         MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onRightClickItem);
         MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onRightClickBlock);
+        MinecraftForge.EVENT_BUS.addListener(DeathBecomes::onBlockBreak);
         DeathBecomesNetwork.register();
     }
 
@@ -142,6 +144,13 @@ public class DeathBecomes {
 
     private static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         cancelWarpStoneUse(event, event.getItemStack());
+    }
+
+    private static void onBlockBreak(BlockEvent.BreakEvent event) {
+        Player player = event.getPlayer();
+        if (!player.level().isClientSide && isInHunterChase(player)) {
+            event.setCanceled(true);
+        }
     }
 
     private static void cancelWarpStoneUse(PlayerInteractEvent event, ItemStack stack) {
