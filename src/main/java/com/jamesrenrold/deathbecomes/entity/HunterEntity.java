@@ -174,7 +174,11 @@ public class HunterEntity extends Monster {
             setTarget(target);
             if (leapCooldownTicks > 0) leapCooldownTicks--;
             if (counterRecoveryTicks > 0) counterRecoveryTicks--;
-            if (leapWindupTicks > 0 && target.getY() > getY() + 1.2D) {
+            boolean elevatedTarget = target.getY() > getY() + 1.2D;
+            boolean directClimbPath = elevatedTarget && hasDirectClimbPath(target);
+            boolean navigablePath = elevatedTarget && !directClimbPath && hasNavigablePath(target);
+            boolean shouldLeap = elevatedTarget && !directClimbPath && !navigablePath;
+            if (leapWindupTicks > 0 && shouldLeap) {
                 tickLeapWindup(target);
                 return;
             } else if (leapWindupTicks > 0) {
@@ -187,13 +191,13 @@ public class HunterEntity extends Monster {
                 if (distanceToSqr(target) <= 2.25D) startCapture(target);
                 return;
             }
-            if (target.getY() > getY() + 1.2D) {
-                if (hasDirectClimbPath(target)) {
+            if (elevatedTarget) {
+                if (directClimbPath) {
                     climbing = true;
                     climbToward(target);
                 } else {
                     climbing = false;
-                    if (leapCooldownTicks <= 0) beginLeapWindup();
+                    if (shouldLeap && leapCooldownTicks <= 0) beginLeapWindup();
                 }
             } else {
                 climbing = false;
@@ -490,6 +494,11 @@ public class HunterEntity extends Monster {
         return hasWall && level().noCollision(this, raisedBox);
     }
 
+    private boolean hasNavigablePath(Player target) {
+        var path = getNavigation().createPath(target, 0);
+        return path != null && path.canReach();
+    }
+
     private void climbToward(Player target) {
         getNavigation().stop();
         faceTarget(target);
@@ -523,14 +532,27 @@ public class HunterEntity extends Monster {
     private void leapAt(Player target) {
         Vec3 toward = target.position().subtract(position());
         Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
-        if (horizontal.lengthSqr() < 1.0E-5D) horizontal = new Vec3(0.0D, 0.0D, 1.0D);
-        horizontal = horizontal.normalize();
-        double horizontalSpeed = Math.min(1.1D, Math.max(0.70D, Math.sqrt(distanceToSqr(target)) * 0.16D));
-        double verticalSpeed = 0.72D + Math.min(0.35D, Math.max(0.0D, toward.y) * 0.04D);
+        double horizontalDistance = horizontal.length();
+        if (horizontalDistance < 1.0E-5D) {
+            horizontal = new Vec3(0.0D, 0.0D, 1.0D);
+            horizontalDistance = 0.0D;
+        } else {
+            horizontal = horizontal.scale(1.0D / horizontalDistance);
+        }
+        int flightDuration = Math.min(32, Math.max(12, 12 + (int) Math.ceil(horizontalDistance * 1.1D)));
+        double horizontalTravelFactor = 0.0D;
+        double drag = 1.0D;
+        for (int tick = 0; tick < flightDuration; tick++) {
+            horizontalTravelFactor += drag;
+            drag *= 0.91D;
+        }
+        double horizontalSpeed = Math.min(3.0D, Math.max(0.35D, horizontalDistance / horizontalTravelFactor));
+        double verticalSpeed = Math.min(1.65D, Math.max(0.72D,
+                0.62D + Math.max(0.0D, toward.y) * 0.12D + horizontalDistance * 0.025D));
         setDeltaMovement(horizontal.x * horizontalSpeed, verticalSpeed, horizontal.z * horizontalSpeed);
         setGlowingTag(false);
         leapWindupTicks = 0;
-        leapFlightTicks = 12;
+        leapFlightTicks = flightDuration;
         leapCooldownTicks = 60;
         climbing = false;
     }
