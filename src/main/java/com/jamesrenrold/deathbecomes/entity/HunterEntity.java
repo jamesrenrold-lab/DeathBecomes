@@ -11,6 +11,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Style;
 import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -31,6 +32,7 @@ import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.AABB;
 import net.minecraftforge.registries.ForgeRegistries;
@@ -42,7 +44,8 @@ public class HunterEntity extends Monster {
     private static final EntityDataAccessor<Integer> TARGET_ID = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Byte> PHASE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BYTE);
     private static final EntityDataAccessor<Boolean> SHAKE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BOOLEAN);
-    private static final byte INTRO = 0, CHASE = 1, CAPTURE = 2, DEPART = 3, ESCAPE = 4, WALK_AWAY = 5;
+    private static final byte INTRO = 0, CHASE = 1, CAPTURE = 2, DEPART = 3, ESCAPE = 4, WALK_AWAY = 5,
+            COUNTERATTACK = 6;
     private UUID targetUuid;
     private int phaseTicks;
     private int captureTicks;
@@ -58,6 +61,14 @@ public class HunterEntity extends Monster {
     private int leapWindupTicks;
     private int leapFlightTicks;
     private int leapCooldownTicks;
+    private int counterCatchCount;
+    private int counterWindowTicks;
+    private double counterX;
+    private double counterY;
+    private double counterZ;
+    private int quickRampTicks = -1;
+    private boolean speedRampAtMaximum;
+    private int counterRecoveryTicks;
 
     public HunterEntity(EntityType<? extends Monster> type, Level level) {
         super(type, level);
@@ -104,9 +115,11 @@ public class HunterEntity extends Monster {
     @Override
     public boolean hurt(DamageSource source, float amount) {
         byte phase = entityData.get(PHASE);
-        if (phase == INTRO || phase == CAPTURE || phase == DEPART || phase == ESCAPE || isInvulnerable()) return false;
+        boolean counterWindowOpen = phase == COUNTERATTACK && counterWindowTicks > 0;
+        if (phase == INTRO || phase == CAPTURE || phase == DEPART || phase == ESCAPE
+                || (phase == COUNTERATTACK && !counterWindowOpen) || isInvulnerable()) return false;
         boolean accepted = super.hurt(source, amount);
-        if (accepted && amount > 0.0F && phase == CHASE) {
+        if (accepted && amount > 0.0F && (phase == CHASE || counterWindowOpen)) {
             damageTaken += amount;
             if (damageTaken >= 500.0F) escapeWithReward();
         }
@@ -150,6 +163,7 @@ public class HunterEntity extends Monster {
             updateChaseSpeed();
             setTarget(target);
             if (leapCooldownTicks > 0) leapCooldownTicks--;
+            if (counterRecoveryTicks > 0) counterRecoveryTicks--;
             if (leapWindupTicks > 0 && target.getY() > getY() + 1.2D) {
                 tickLeapWindup(target);
                 return;
@@ -176,7 +190,7 @@ public class HunterEntity extends Monster {
                 leapWindupTicks = 0;
                 setGlowingTag(false);
             }
-            if (distanceToSqr(target) <= 2.25D) startCapture(target);
+            if (counterRecoveryTicks <= 0 && distanceToSqr(target) <= 2.25D) startCapture(target);
             return;
         }
 
@@ -193,6 +207,16 @@ public class HunterEntity extends Monster {
                 entityData.set(PHASE, DEPART);
                 phaseTicks = 0;
             }
+            return;
+        }
+
+        if (phase == COUNTERATTACK) {
+            getNavigation().stop();
+            target.setPos(counterX, counterY, counterZ);
+            target.setDeltaMovement(Vec3.ZERO);
+            target.setSprinting(false);
+            counterWindowTicks--;
+            if (counterWindowTicks <= 0) throwTargetAndResumeChase(target);
             return;
         }
 
@@ -254,6 +278,7 @@ public class HunterEntity extends Monster {
         leapWindupTicks = 0;
         leapFlightTicks = 0;
         leapCooldownTicks = 0;
+        counterRecoveryTicks = 0;
         climbing = false;
         setGlowingTag(false);
         entityData.set(SHAKE, true);
@@ -266,14 +291,43 @@ public class HunterEntity extends Monster {
     }
 
     private void startCapture(Player target) {
+        if (counterCatchCount < 3) {
+            beginCounterattack(target);
+            return;
+        }
+
+        beginFinalCapture(target);
+    }
+
+    private void beginCounterattack(Player target) {
+        counterCatchCount++;
+        counterWindowTicks = 60;
+        counterX = target.getX();
+        counterY = target.getY();
+        counterZ = target.getZ();
+        captureStartedAt = level().getGameTime();
+        target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 12L * 20L);
+        DeathBecomes.applyManaDebuff(target);
+        target.setSprinting(false);
+        target.setDeltaMovement(Vec3.ZERO);
+        setTarget(null);
+        getNavigation().stop();
+        entityData.set(PHASE, COUNTERATTACK);
+        phaseTicks = 0;
+        setInvulnerable(false);
+    }
+
+    private void beginFinalCapture(Player target) {
         entityData.set(PHASE, CAPTURE);
         captureTicks = 0;
         captureStartedAt = level().getGameTime();
         captureHadHeart = HeartFragmentItem.getHeartCount(target) > 0;
-        int xpToSteal = Math.max(0, target.totalExperience / 3);
-        if (xpToSteal > 0) {
-            target.giveExperiencePoints(-xpToSteal);
-            stolenExperience += xpToSteal;
+        if (!captureHadHeart) {
+            int xpToSteal = Math.max(0, target.totalExperience / 3);
+            if (xpToSteal > 0) {
+                target.giveExperiencePoints(-xpToSteal);
+                stolenExperience += xpToSteal;
+            }
         }
         DeathBecomes.applyManaDebuff(target);
         target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 12L * 20L);
@@ -289,13 +343,78 @@ public class HunterEntity extends Monster {
         target.getPersistentData().putLong("DeathBecomesPendingEffectsAt", Math.max(level().getGameTime(), stunEnd));
     }
 
+    private void throwTargetAndResumeChase(Player target) {
+        Vec3 direction = new Vec3(target.getX() - getX(), 0.0D, target.getZ() - getZ());
+        if (direction.lengthSqr() < 1.0E-5D) direction = new Vec3(0.0D, 0.0D, 1.0D);
+        direction = direction.normalize();
+        createBoneWallIfNeeded(target, direction);
+
+        target.setHealth(Math.max(0.5F, target.getHealth() * 0.60F));
+        target.setDeltaMovement(direction.x * 1.25D, 0.48D, direction.z * 1.25D);
+        if (target instanceof ServerPlayer serverPlayer) {
+            serverPlayer.connection.send(new ClientboundSetEntityMotionPacket(serverPlayer));
+        }
+        scheduleLingeringEffects(target);
+        showActionbar(target, "You'll run out of energy soon enough.");
+        quickRampTicks = 0;
+        speedRampAtMaximum = false;
+        counterRecoveryTicks = 20;
+        phaseTicks = 0;
+        entityData.set(PHASE, CHASE);
+        setInvisible(false);
+        setInvulnerable(false);
+        setTarget(target);
+        getNavigation().stop();
+    }
+
+    private void createBoneWallIfNeeded(Player target, Vec3 direction) {
+        for (int distance = 1; distance <= 7; distance++) {
+            for (int height = 0; height < 3; height++) {
+                BlockPos probe = BlockPos.containing(target.getX() + direction.x * distance,
+                        target.getY() + height + 0.2D, target.getZ() + direction.z * distance);
+                if (!level().getBlockState(probe).getCollisionShape(level(), probe).isEmpty()) return;
+            }
+        }
+
+        Vec3 side = new Vec3(-direction.z, 0.0D, direction.x);
+        double wallX = target.getX() + direction.x * 3.5D;
+        double wallZ = target.getZ() + direction.z * 3.5D;
+        for (int lateral = -1; lateral <= 1; lateral++) {
+            BlockPos base = BlockPos.containing(wallX + side.x * lateral, target.getY(), wallZ + side.z * lateral);
+            for (int height = 0; height < 3; height++) {
+                BlockPos pos = base.above(height);
+                var state = level().getBlockState(pos);
+                if (state.isAir() || state.canBeReplaced()) {
+                    level().setBlockAndUpdate(pos, Blocks.BONE_BLOCK.defaultBlockState());
+                }
+            }
+        }
+    }
+
     private void updateChaseSpeed() {
         double progress = Math.min(1.0D, phaseTicks / 2400.0D);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
         Player target = getHuntTarget();
         int bonusHearts = target == null ? 0 : HeartFragmentItem.getHeartCount(target);
         double heartMultiplier = Math.pow(1.2D, bonusHearts);
-        if (speed != null) speed.setBaseValue((0.20D + 0.12D * progress) * heartMultiplier);
+        double chaseSpeed;
+        if (quickRampTicks >= 0) {
+            int elapsed = quickRampTicks++;
+            if (elapsed < 20) {
+                chaseSpeed = 0.20D;
+            } else {
+                chaseSpeed = 0.20D + 0.12D * Math.min(1.0D, (elapsed - 20) / 200.0D);
+                if (elapsed >= 220) {
+                    quickRampTicks = -1;
+                    speedRampAtMaximum = true;
+                }
+            }
+        } else if (speedRampAtMaximum) {
+            chaseSpeed = 0.32D;
+        } else {
+            chaseSpeed = 0.20D + 0.12D * progress;
+        }
+        if (speed != null) speed.setBaseValue(chaseSpeed * heartMultiplier);
     }
 
     private boolean hasDirectClimbPath(Player target) {
@@ -433,6 +552,14 @@ public class HunterEntity extends Monster {
         tag.putInt("StolenExperience", stolenExperience);
         tag.putBoolean("CaptureHadHeart", captureHadHeart);
         tag.putBoolean("KillAfterStare", killAfterStare);
+        tag.putInt("CounterCatchCount", counterCatchCount);
+        tag.putInt("CounterWindowTicks", counterWindowTicks);
+        tag.putDouble("CounterX", counterX);
+        tag.putDouble("CounterY", counterY);
+        tag.putDouble("CounterZ", counterZ);
+        tag.putInt("QuickRampTicks", quickRampTicks);
+        tag.putBoolean("SpeedRampAtMaximum", speedRampAtMaximum);
+        tag.putInt("CounterRecoveryTicks", counterRecoveryTicks);
     }
 
     @Override
@@ -448,6 +575,14 @@ public class HunterEntity extends Monster {
         stolenExperience = tag.getInt("StolenExperience");
         captureHadHeart = tag.getBoolean("CaptureHadHeart");
         killAfterStare = tag.getBoolean("KillAfterStare");
+        counterCatchCount = tag.getInt("CounterCatchCount");
+        counterWindowTicks = tag.getInt("CounterWindowTicks");
+        counterX = tag.getDouble("CounterX");
+        counterY = tag.getDouble("CounterY");
+        counterZ = tag.getDouble("CounterZ");
+        if (tag.contains("QuickRampTicks")) quickRampTicks = tag.getInt("QuickRampTicks");
+        speedRampAtMaximum = tag.getBoolean("SpeedRampAtMaximum");
+        counterRecoveryTicks = tag.getInt("CounterRecoveryTicks");
     }
 
 }
