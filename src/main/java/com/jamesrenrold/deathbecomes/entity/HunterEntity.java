@@ -5,6 +5,7 @@ import com.jamesrenrold.deathbecomes.item.ModItems;
 import com.jamesrenrold.deathbecomes.item.HeartFragmentItem;
 import com.jamesrenrold.deathbecomes.network.DeathBecomesNetwork;
 import net.minecraft.core.particles.DustParticleOptions;
+import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
@@ -31,6 +32,7 @@ import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.AABB;
 import net.minecraftforge.registries.ForgeRegistries;
 import org.joml.Vector3f;
 
@@ -49,12 +51,13 @@ public class HunterEntity extends Monster {
     private long captureStartedAt;
     private boolean rewardGranted;
     private Vec3 departureDirection = new Vec3(0.0D, 0.0D, 1.0D);
-    private Vec3 lastChasePosition;
-    private int stuckTicks;
     private int stolenExperience;
     private boolean captureHadHeart;
     private boolean killAfterStare;
     private boolean climbing;
+    private int leapWindupTicks;
+    private int leapFlightTicks;
+    private int leapCooldownTicks;
 
     public HunterEntity(EntityType<? extends Monster> type, Level level) {
         super(type, level);
@@ -146,12 +149,32 @@ public class HunterEntity extends Monster {
             }
             updateChaseSpeed();
             setTarget(target);
-            updateStuckCounter();
-            if (target.getY() > getY() + 1.2D && (climbing || stuckTicks >= 20)) {
-                climbing = true;
-                climbToward(target);
+            if (leapCooldownTicks > 0) leapCooldownTicks--;
+            if (leapWindupTicks > 0 && target.getY() > getY() + 1.2D) {
+                tickLeapWindup(target);
+                return;
+            } else if (leapWindupTicks > 0) {
+                leapWindupTicks = 0;
+                setGlowingTag(false);
+            }
+            if (leapFlightTicks > 0) {
+                leapFlightTicks--;
+                getNavigation().stop();
+                if (distanceToSqr(target) <= 2.25D) startCapture(target);
+                return;
+            }
+            if (target.getY() > getY() + 1.2D) {
+                if (hasDirectClimbPath(target)) {
+                    climbing = true;
+                    climbToward(target);
+                } else {
+                    climbing = false;
+                    if (leapCooldownTicks <= 0) beginLeapWindup();
+                }
             } else {
                 climbing = false;
+                leapWindupTicks = 0;
+                setGlowingTag(false);
             }
             if (distanceToSqr(target) <= 2.25D) startCapture(target);
             return;
@@ -228,8 +251,11 @@ public class HunterEntity extends Monster {
         setInvulnerable(false);
         setTarget(target);
         getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.20D);
-        lastChasePosition = position();
-        stuckTicks = 0;
+        leapWindupTicks = 0;
+        leapFlightTicks = 0;
+        leapCooldownTicks = 0;
+        climbing = false;
+        setGlowingTag(false);
         entityData.set(SHAKE, true);
         shakeTicks = 0;
         if (target instanceof ServerPlayer serverPlayer) {
@@ -272,16 +298,18 @@ public class HunterEntity extends Monster {
         if (speed != null) speed.setBaseValue((0.20D + 0.12D * progress) * heartMultiplier);
     }
 
-    private void updateStuckCounter() {
-        Vec3 current = position();
-        if (lastChasePosition != null && current.distanceToSqr(lastChasePosition) < 0.0025D) {
-            stuckTicks = Math.min(stuckTicks + 1, 200);
-        } else {
-            stuckTicks = 0;
-        }
-        lastChasePosition = current;
+    private boolean hasDirectClimbPath(Player target) {
+        Vec3 toward = target.position().subtract(position());
+        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
+        if (horizontal.lengthSqr() < 1.0E-5D) return false;
+        horizontal = horizontal.normalize();
+        Vec3 wallProbe = position().add(horizontal.scale(getBbWidth() * 0.5D + 0.12D))
+                .add(0.0D, getBbHeight() * 0.55D, 0.0D);
+        BlockPos wallPos = BlockPos.containing(wallProbe);
+        boolean hasWall = !level().getBlockState(wallPos).getCollisionShape(level(), wallPos).isEmpty();
+        AABB raisedBox = getBoundingBox().move(0.0D, 0.48D, 0.0D);
+        return hasWall && level().noCollision(this, raisedBox);
     }
-
 
     private void climbToward(Player target) {
         getNavigation().stop();
@@ -292,6 +320,40 @@ public class HunterEntity extends Monster {
         Vec3 climbStep = new Vec3(horizontal.x * 0.10D, 0.48D, horizontal.z * 0.10D);
         move(MoverType.SELF, climbStep);
         setDeltaMovement(0.0D, 0.0D, 0.0D);
+    }
+
+    private void beginLeapWindup() {
+        leapWindupTicks = 1;
+        setGlowingTag(true);
+        getNavigation().stop();
+    }
+
+    private void tickLeapWindup(Player target) {
+        getNavigation().stop();
+        faceTarget(target);
+        leapWindupTicks++;
+        if (level() instanceof ServerLevel serverLevel) {
+            DustParticleOptions red = new DustParticleOptions(new Vector3f(0.95F, 0.02F, 0.02F), 1.8F);
+            serverLevel.sendParticles(red, getX(), getY() + getBbHeight() * 0.55D, getZ(), 10,
+                    0.35D, 0.55D, 0.35D, 0.02D);
+        }
+        if (leapWindupTicks == 10) showActionbar(target, "Oh no you don't.");
+        if (leapWindupTicks >= 20) leapAt(target);
+    }
+
+    private void leapAt(Player target) {
+        Vec3 toward = target.position().subtract(position());
+        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
+        if (horizontal.lengthSqr() < 1.0E-5D) horizontal = new Vec3(0.0D, 0.0D, 1.0D);
+        horizontal = horizontal.normalize();
+        double horizontalSpeed = Math.min(1.1D, Math.max(0.70D, Math.sqrt(distanceToSqr(target)) * 0.16D));
+        double verticalSpeed = 0.72D + Math.min(0.35D, Math.max(0.0D, toward.y) * 0.04D);
+        setDeltaMovement(horizontal.x * horizontalSpeed, verticalSpeed, horizontal.z * horizontalSpeed);
+        setGlowingTag(false);
+        leapWindupTicks = 0;
+        leapFlightTicks = 12;
+        leapCooldownTicks = 60;
+        climbing = false;
     }
 
     private void faceTarget(Player target) {
