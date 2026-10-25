@@ -2,6 +2,7 @@ package com.jamesrenrold.deathbecomes.entity;
 
 import com.jamesrenrold.deathbecomes.DeathBecomes;
 import com.jamesrenrold.deathbecomes.item.ModItems;
+import com.jamesrenrold.deathbecomes.item.HeartFragmentItem;
 import com.jamesrenrold.deathbecomes.network.DeathBecomesNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.DustParticleOptions;
@@ -18,6 +19,7 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.EntityType;
@@ -49,6 +51,11 @@ public class HunterEntity extends Monster {
     private long captureStartedAt;
     private boolean rewardGranted;
     private Vec3 departureDirection = new Vec3(0.0D, 0.0D, 1.0D);
+    private Vec3 lastChasePosition;
+    private int stuckTicks;
+    private int stolenExperience;
+    private boolean captureHadHeart;
+    private boolean killAfterStare;
 
     public HunterEntity(EntityType<? extends Monster> type, Level level) {
         super(type, level);
@@ -140,7 +147,16 @@ public class HunterEntity extends Monster {
             }
             updateChaseSpeed();
             setTarget(target);
-            if (tickCount % 10 == 0) breakObstructingBlocks(target);
+            updateStuckCounter();
+            if (tickCount % 10 == 0) {
+                if (stuckTicks >= 20 && target.getY() > getY() + 1.2D) {
+                    swing(InteractionHand.MAIN_HAND);
+                    breakObstructingBlocks(target);
+                    breakTargetSupport(target);
+                } else {
+                    breakObstructingBlocks(target);
+                }
+            }
             if (distanceToSqr(target) <= 2.25D) startCapture(target);
             return;
         }
@@ -153,12 +169,8 @@ public class HunterEntity extends Monster {
                 target.setHealth(Math.max(0.5F, target.getHealth() - 2.0F));
             }
             if (target.getHealth() <= 0.5F) {
-                ServerPlayer serverPlayer = target instanceof ServerPlayer sp ? sp : null;
-                if (serverPlayer != null) {
-                    serverPlayer.connection.send(new ClientboundSetActionBarTextPacket(Component.literal("How can you live with yourself?").setStyle(Style.EMPTY.withColor(ChatFormatting.RED))));
-                } else {
-                    target.displayClientMessage(Component.literal("How can you live with yourself?").setStyle(Style.EMPTY.withColor(ChatFormatting.RED)), true);
-                }
+                showActionbar(target, captureHadHeart ? "Told you I'd be back." : "How can you live with yourself?");
+                killAfterStare = captureHadHeart;
                 entityData.set(PHASE, DEPART);
                 phaseTicks = 0;
             }
@@ -168,7 +180,18 @@ public class HunterEntity extends Monster {
         if (phase == DEPART) {
             phaseTicks++;
             getNavigation().stop();
-            if (phaseTicks >= 100) {
+            if (killAfterStare && target != null) {
+                faceTarget(target);
+                if (phaseTicks >= 40) {
+                    scheduleLingeringEffects(target);
+                    HeartFragmentItem.removeHeart(target);
+                    target.hurt(damageSources().mobAttack(this), Math.max(1.0F, target.getHealth() + 1.0F));
+                    if (target.isAlive()) target.setHealth(0.0F);
+                    killAfterStare = false;
+                    stopMusic();
+                    walkAwayFrom(target);
+                }
+            } else if (phaseTicks >= 100) {
                 scheduleLingeringEffects(target);
                 stopMusic();
                 walkAwayFrom(target);
@@ -209,6 +232,8 @@ public class HunterEntity extends Monster {
         setInvulnerable(false);
         setTarget(target);
         getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.20D);
+        lastChasePosition = position();
+        stuckTicks = 0;
         entityData.set(SHAKE, true);
         shakeTicks = 0;
         if (target instanceof ServerPlayer serverPlayer) {
@@ -222,6 +247,13 @@ public class HunterEntity extends Monster {
         entityData.set(PHASE, CAPTURE);
         captureTicks = 0;
         captureStartedAt = level().getGameTime();
+        captureHadHeart = HeartFragmentItem.getHeartCount(target) > 0;
+        int xpToSteal = Math.max(0, target.totalExperience / 3);
+        if (xpToSteal > 0) {
+            target.giveExperiencePoints(-xpToSteal);
+            stolenExperience += xpToSteal;
+        }
+        DeathBecomes.applyManaDebuff(target);
         target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 12L * 20L);
         getNavigation().stop();
         target.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.WEAKNESS, 12 * 20, 4));
@@ -238,7 +270,47 @@ public class HunterEntity extends Monster {
     private void updateChaseSpeed() {
         double progress = Math.min(1.0D, phaseTicks / 2400.0D);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
-        if (speed != null) speed.setBaseValue(0.20D + 0.12D * progress);
+        Player target = getHuntTarget();
+        int bonusHearts = target == null ? 0 : HeartFragmentItem.getHeartCount(target);
+        double heartMultiplier = Math.pow(1.2D, bonusHearts);
+        if (speed != null) speed.setBaseValue((0.20D + 0.12D * progress) * heartMultiplier);
+    }
+
+    private void updateStuckCounter() {
+        Vec3 current = position();
+        if (lastChasePosition != null && current.distanceToSqr(lastChasePosition) < 0.0025D) {
+            stuckTicks = Math.min(stuckTicks + 1, 200);
+        } else {
+            stuckTicks = 0;
+        }
+        lastChasePosition = current;
+    }
+
+    private void breakTargetSupport(Player target) {
+        if (!target.onGround()) return;
+        BlockPos support = BlockPos.containing(target.getX(), target.getY() - 0.05D, target.getZ());
+        BlockState state = level().getBlockState(support);
+        float hardness = state.getDestroySpeed(level(), support);
+        if (!state.isAir() && !state.hasBlockEntity() && hardness >= 0.0F && hardness <= 50.0F) {
+            level().destroyBlock(support, true, this);
+        }
+    }
+
+    private void faceTarget(Player target) {
+        Vec3 toward = target.position().subtract(position());
+        if (toward.lengthSqr() < 1.0E-5D) return;
+        float yaw = (float) (Math.atan2(-toward.x, toward.z) * (180.0D / Math.PI));
+        setYRot(yaw);
+        setYHeadRot(yaw);
+    }
+
+    private void showActionbar(Player target, String message) {
+        Component line = Component.literal(message).setStyle(Style.EMPTY.withColor(ChatFormatting.RED));
+        if (target instanceof ServerPlayer serverPlayer) {
+            serverPlayer.connection.send(new ClientboundSetActionBarTextPacket(line));
+        } else {
+            target.displayClientMessage(line, true);
+        }
     }
 
     private void walkAwayFrom(Player target) {
@@ -311,6 +383,9 @@ public class HunterEntity extends Monster {
         tag.putFloat("DamageTaken", damageTaken);
         tag.putLong("CaptureStartedAt", captureStartedAt);
         tag.putBoolean("RewardGranted", rewardGranted);
+        tag.putInt("StolenExperience", stolenExperience);
+        tag.putBoolean("CaptureHadHeart", captureHadHeart);
+        tag.putBoolean("KillAfterStare", killAfterStare);
     }
 
     @Override
@@ -323,6 +398,9 @@ public class HunterEntity extends Monster {
         damageTaken = tag.getFloat("DamageTaken");
         captureStartedAt = tag.getLong("CaptureStartedAt");
         rewardGranted = tag.getBoolean("RewardGranted");
+        stolenExperience = tag.getInt("StolenExperience");
+        captureHadHeart = tag.getBoolean("CaptureHadHeart");
+        killAfterStare = tag.getBoolean("KillAfterStare");
     }
 
 }
