@@ -4,7 +4,6 @@ import com.jamesrenrold.deathbecomes.DeathBecomes;
 import com.jamesrenrold.deathbecomes.item.ModItems;
 import com.jamesrenrold.deathbecomes.item.HeartFragmentItem;
 import com.jamesrenrold.deathbecomes.network.DeathBecomesNetwork;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -19,11 +18,11 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
@@ -31,7 +30,6 @@ import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.registries.ForgeRegistries;
 import org.joml.Vector3f;
@@ -56,6 +54,7 @@ public class HunterEntity extends Monster {
     private int stolenExperience;
     private boolean captureHadHeart;
     private boolean killAfterStare;
+    private boolean climbing;
 
     public HunterEntity(EntityType<? extends Monster> type, Level level) {
         super(type, level);
@@ -148,14 +147,11 @@ public class HunterEntity extends Monster {
             updateChaseSpeed();
             setTarget(target);
             updateStuckCounter();
-            if (tickCount % 10 == 0) {
-                if (stuckTicks >= 20 && target.getY() > getY() + 1.2D) {
-                    swing(InteractionHand.MAIN_HAND);
-                    breakObstructingBlocks(target);
-                    breakTargetSupport(target);
-                } else {
-                    breakObstructingBlocks(target);
-                }
+            if (target.getY() > getY() + 1.2D && (climbing || stuckTicks >= 20)) {
+                climbing = true;
+                climbToward(target);
+            } else {
+                climbing = false;
             }
             if (distanceToSqr(target) <= 2.25D) startCapture(target);
             return;
@@ -286,14 +282,16 @@ public class HunterEntity extends Monster {
         lastChasePosition = current;
     }
 
-    private void breakTargetSupport(Player target) {
-        if (!target.onGround()) return;
-        BlockPos support = BlockPos.containing(target.getX(), target.getY() - 0.05D, target.getZ());
-        BlockState state = level().getBlockState(support);
-        float hardness = state.getDestroySpeed(level(), support);
-        if (!state.isAir() && !state.hasBlockEntity() && hardness >= 0.0F && hardness <= 50.0F) {
-            level().destroyBlock(support, true, this);
-        }
+
+    private void climbToward(Player target) {
+        getNavigation().stop();
+        faceTarget(target);
+        Vec3 toward = target.position().subtract(position());
+        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
+        if (horizontal.lengthSqr() > 1.0E-5D) horizontal = horizontal.normalize();
+        Vec3 climbStep = new Vec3(horizontal.x * 0.10D, 0.48D, horizontal.z * 0.10D);
+        move(MoverType.SELF, climbStep);
+        setDeltaMovement(0.0D, 0.0D, 0.0D);
     }
 
     private void faceTarget(Player target) {
@@ -327,19 +325,6 @@ public class HunterEntity extends Monster {
         entityData.set(PHASE, WALK_AWAY);
         phaseTicks = 0;
         getNavigation().stop();
-    }
-
-    private void breakObstructingBlocks(Player target) {
-        Vec3 direction = target.position().subtract(position());
-        if (direction.lengthSqr() < 1.0E-5D) return;
-        direction = direction.normalize();
-        BlockPos feet = BlockPos.containing(position().add(direction.scale(0.9D)).add(0.0D, 0.2D, 0.0D));
-        for (int dy = 0; dy < 2; dy++) {
-            BlockPos pos = feet.above(dy);
-            BlockState state = level().getBlockState(pos);
-            if (state.isAir() || state.hasBlockEntity() || state.getDestroySpeed(level(), pos) < 0.0F || state.getDestroySpeed(level(), pos) > 50.0F) continue;
-            level().destroyBlock(pos, true, this);
-        }
     }
 
     private void escapeWithReward() {
