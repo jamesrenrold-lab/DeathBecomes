@@ -195,6 +195,7 @@ public class HunterEntity extends Monster {
 
         if (phase == CAPTURE) {
             getNavigation().stop();
+            trackTargetWithHead(target);
             target.setDeltaMovement(Vec3.ZERO);
             captureTicks++;
             if (captureTicks % 10 == 0 && target.getHealth() > 0.5F) {
@@ -211,6 +212,7 @@ public class HunterEntity extends Monster {
 
         if (phase == COUNTERATTACK) {
             getNavigation().stop();
+            trackTargetWithHead(target);
             target.setPos(counterX, counterY, counterZ);
             target.setDeltaMovement(Vec3.ZERO);
             target.setSprinting(false);
@@ -605,6 +607,13 @@ public class HunterEntity extends Monster {
         }
     }
 
+    private void trackTargetWithHead(Player target) {
+        Vec3 toward = target.position().subtract(position());
+        if (toward.lengthSqr() < 1.0E-5D) return;
+        float yaw = (float) (Math.atan2(-toward.x, toward.z) * (180.0D / Math.PI));
+        setYHeadRot(yaw);
+    }
+
     private void faceTarget(Player target) {
         Vec3 toward = target.position().subtract(position());
         if (toward.lengthSqr() < 1.0E-5D) return;
@@ -623,6 +632,9 @@ public class HunterEntity extends Monster {
     }
 
     private void walkAwayFrom(Player target) {
+        if (stolenExperience > 0 && target != null) {
+            showActionbar(target, "I still need more strength.. it's never enough.");
+        }
         Vec3 away = position().subtract(target.position());
         if (away.lengthSqr() < 1.0E-5D) away = new Vec3(0.0D, 0.0D, 1.0D);
         away = away.normalize();
