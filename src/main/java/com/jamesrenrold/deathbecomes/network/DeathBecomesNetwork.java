@@ -23,11 +23,16 @@ public final class DeathBecomesNetwork {
     public static void register() {
         if (registered) return;
         CHANNEL.registerMessage(0, ChaseMusicMessage.class, ChaseMusicMessage::encode, ChaseMusicMessage::new, ChaseMusicMessage::handle);
+        CHANNEL.registerMessage(1, DepartureFlashMessage.class, DepartureFlashMessage::encode, DepartureFlashMessage::new, DepartureFlashMessage::handle);
         registered = true;
     }
 
     public static void sendChaseMusic(ServerPlayer player, boolean start) {
         CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new ChaseMusicMessage(start));
+    }
+
+    public static void sendDepartureFlash(ServerPlayer player, int durationTicks) {
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new DepartureFlashMessage(durationTicks));
     }
 
     private static final class ChaseMusicMessage {
@@ -41,6 +46,21 @@ public final class DeathBecomesNetwork {
             NetworkEvent.Context context = supplier.get();
             context.enqueueWork(() -> net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(net.minecraftforge.api.distmarker.Dist.CLIENT,
                     () -> () -> com.jamesrenrold.deathbecomes.client.ClientMusic.setPlaying(playing)));
+            context.setPacketHandled(true);
+        }
+    }
+
+    private static final class DepartureFlashMessage {
+        private final int durationTicks;
+
+        private DepartureFlashMessage(int durationTicks) { this.durationTicks = durationTicks; }
+        private DepartureFlashMessage(FriendlyByteBuf buffer) { this.durationTicks = buffer.readVarInt(); }
+        private void encode(FriendlyByteBuf buffer) { buffer.writeVarInt(durationTicks); }
+
+        private void handle(Supplier<NetworkEvent.Context> supplier) {
+            NetworkEvent.Context context = supplier.get();
+            context.enqueueWork(() -> net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(net.minecraftforge.api.distmarker.Dist.CLIENT,
+                    () -> () -> com.jamesrenrold.deathbecomes.client.ClientModEvents.flashBlackScreen(durationTicks)));
             context.setPacketHandled(true);
         }
     }
