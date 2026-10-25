@@ -27,13 +27,11 @@ import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
-import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.AABB;
 import net.minecraftforge.registries.ForgeRegistries;
 import org.joml.Vector3f;
 
@@ -59,10 +57,6 @@ public class HunterEntity extends Monster {
     private boolean captureHadHeart;
     private boolean killAfterStare;
     private boolean climbing;
-    private int climbAttemptTicks;
-    private int leapWindupTicks;
-    private int leapFlightTicks;
-    private int leapCooldownTicks;
     private int counterCatchCount;
     private int counterWindowTicks;
     private double counterX;
@@ -98,7 +92,6 @@ public class HunterEntity extends Monster {
     @Override
     protected void registerGoals() {
         goalSelector.addGoal(0, new FloatGoal(this));
-        goalSelector.addGoal(2, new MeleeAttackGoal(this, 1.3D, true));
     }
 
     @Override
@@ -181,53 +174,18 @@ public class HunterEntity extends Monster {
             }
             updateChaseSpeed();
             setTarget(target);
-            if (leapCooldownTicks > 0) leapCooldownTicks--;
             if (counterRecoveryTicks > 0) counterRecoveryTicks--;
+            faceTarget(target);
             boolean elevatedTarget = target.getY() > getY() + 1.2D;
-            boolean directClimbPath = elevatedTarget && hasDirectClimbPath(target);
-            boolean navigablePath = elevatedTarget && !directClimbPath && hasNavigablePath(target);
-            boolean shouldLeap = elevatedTarget && !directClimbPath && !navigablePath;
-            if (leapWindupTicks > 0 && shouldLeap) {
-                tickLeapWindup(target);
-                return;
-            } else if (leapWindupTicks > 0) {
-                leapWindupTicks = 0;
-                setGlowingTag(false);
-            }
-            if (leapFlightTicks > 0) {
-                leapFlightTicks--;
-                getNavigation().stop();
-                if (distanceToSqr(target) <= 2.25D) startCapture(target);
-                return;
-            }
+            clearBlocksInPath(target);
             if (elevatedTarget) {
-                if (directClimbPath) {
-                    climbing = true;
-                    climbToward(target);
-                } else if (navigablePath) {
-                    // Let navigation reach the base of an elevated route before a leap.
-                    climbAttemptTicks = 0;
-                    climbing = false;
-                    getNavigation().moveTo(target, 1.0D);
-                } else if (climbAttemptTicks < 40) {
-                    // Probe for a climbable face for two seconds before considering a leap.
-                    climbAttemptTicks++;
-                    if (hasClimbSurface(target)) {
-                        climbing = true;
-                        climbToward(target);
-                    } else {
-                        climbing = false;
-                        getNavigation().moveTo(target, 1.0D);
-                    }
-                } else {
-                    climbing = false;
-                    if (shouldLeap && leapCooldownTicks <= 0) beginLeapWindup();
-                }
+                climbing = true;
+                if (!hasClimbSurface(target)) createBoneClimbColumn(target);
+                climbToward(target);
             } else {
-                climbAttemptTicks = 0;
                 climbing = false;
-                leapWindupTicks = 0;
-                setGlowingTag(false);
+                removeTemporaryBoneWall();
+                runToward(target);
             }
             if (counterRecoveryTicks <= 0 && distanceToSqr(target) <= 2.25D) startCapture(target);
             return;
@@ -342,9 +300,6 @@ public class HunterEntity extends Monster {
         setInvulnerable(false);
         setTarget(target);
         getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.20D);
-        leapWindupTicks = 0;
-        leapFlightTicks = 0;
-        leapCooldownTicks = 0;
         counterRecoveryTicks = 0;
         climbing = false;
         setGlowingTag(false);
@@ -541,12 +496,6 @@ public class HunterEntity extends Monster {
         if (speed != null) speed.setBaseValue(chaseSpeed * heartMultiplier);
     }
 
-    private boolean hasDirectClimbPath(Player target) {
-        if (!hasClimbSurface(target)) return false;
-        AABB raisedBox = getBoundingBox().move(0.0D, 0.48D, 0.0D);
-        return level().noCollision(this, raisedBox);
-    }
-
     private boolean hasClimbSurface(Player target) {
         Vec3 toward = target.position().subtract(position());
         Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
@@ -566,67 +515,73 @@ public class HunterEntity extends Monster {
         return hasWall;
     }
 
-    private boolean hasNavigablePath(Player target) {
-        var path = getNavigation().createPath(target, 0);
-        return path != null && path.canReach();
-    }
-
     private void climbToward(Player target) {
         getNavigation().stop();
         faceTarget(target);
         Vec3 toward = target.position().subtract(position());
         Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
         if (horizontal.lengthSqr() > 1.0E-5D) horizontal = horizontal.normalize();
-        Vec3 climbStep = new Vec3(horizontal.x * 0.10D, 0.48D, horizontal.z * 0.10D);
-        move(MoverType.SELF, climbStep);
-        setDeltaMovement(0.0D, 0.0D, 0.0D);
+        double verticalStep = Math.min(0.90D, Math.max(0.55D, target.getY() - getY()));
+        move(MoverType.SELF, new Vec3(horizontal.x * 0.08D, verticalStep, horizontal.z * 0.08D));
+        setDeltaMovement(Vec3.ZERO);
     }
 
-    private void beginLeapWindup() {
-        leapWindupTicks = 1;
-        setGlowingTag(true);
+    private void runToward(Player target) {
         getNavigation().stop();
-    }
-
-    private void tickLeapWindup(Player target) {
-        getNavigation().stop();
-        faceTarget(target);
-        leapWindupTicks++;
-        if (level() instanceof ServerLevel serverLevel) {
-            DustParticleOptions red = new DustParticleOptions(new Vector3f(0.95F, 0.02F, 0.02F), 1.8F);
-            serverLevel.sendParticles(red, getX(), getY() + getBbHeight() * 0.55D, getZ(), 10,
-                    0.35D, 0.55D, 0.35D, 0.02D);
-        }
-        if (leapWindupTicks == 10) showActionbar(target, "Oh no you don't.");
-        if (leapWindupTicks >= 20) leapAt(target);
-    }
-
-    private void leapAt(Player target) {
         Vec3 toward = target.position().subtract(position());
         Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
-        double horizontalDistance = horizontal.length();
-        if (horizontalDistance < 1.0E-5D) {
-            horizontal = new Vec3(0.0D, 0.0D, 1.0D);
-            horizontalDistance = 0.0D;
-        } else {
-            horizontal = horizontal.scale(1.0D / horizontalDistance);
+        if (horizontal.lengthSqr() < 1.0E-5D) return;
+        horizontal = horizontal.normalize();
+        double speed = getAttributeValue(Attributes.MOVEMENT_SPEED) * 2.4D;
+        Vec3 existing = getDeltaMovement();
+        move(MoverType.SELF, new Vec3(horizontal.x * speed, existing.y, horizontal.z * speed));
+        setDeltaMovement(0.0D, getDeltaMovement().y, 0.0D);
+    }
+
+    private void clearBlocksInPath(Player target) {
+        Vec3 toward = target.position().subtract(position());
+        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
+        if (horizontal.lengthSqr() < 1.0E-5D) return;
+        horizontal = horizontal.normalize();
+        Vec3 side = new Vec3(-horizontal.z, 0.0D, horizontal.x);
+        int feetY = (int) Math.floor(getY());
+        int clearHeight = Math.max(1, (int) Math.ceil(getBbHeight()));
+        double reach = Math.max(1.1D, getAttributeValue(Attributes.MOVEMENT_SPEED) * 5.0D);
+        for (double distance = 0.25D; distance <= reach; distance += 0.35D) {
+            for (double lateral : new double[]{-0.30D, 0.0D, 0.30D}) {
+                for (int height = 0; height < clearHeight; height++) {
+                    BlockPos pos = BlockPos.containing(getX() + horizontal.x * distance + side.x * lateral,
+                            feetY + height, getZ() + horizontal.z * distance + side.z * lateral);
+                    if (pos.getY() < feetY || temporaryBoneWall.containsKey(pos)
+                            || level().getBlockEntity(pos) != null) continue;
+                    var state = level().getBlockState(pos);
+                    if (state.isAir() || !state.getFluidState().isEmpty()
+                            || state.getDestroySpeed(level(), pos) < 0.0F) continue;
+                    level().destroyBlock(pos, false);
+                }
+            }
         }
-        int flightDuration = Math.min(32, Math.max(12, 12 + (int) Math.ceil(horizontalDistance * 1.1D)));
-        double horizontalTravelFactor = 0.0D;
-        double drag = 1.0D;
-        for (int tick = 0; tick < flightDuration; tick++) {
-            horizontalTravelFactor += drag;
-            drag *= 0.91D;
+    }
+
+    private void createBoneClimbColumn(Player target) {
+        Vec3 toward = target.position().subtract(position());
+        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
+        if (horizontal.lengthSqr() < 1.0E-5D) return;
+        horizontal = horizontal.normalize();
+        int feetY = (int) Math.floor(getY());
+        int height = Math.min(12, Math.max(2, (int) Math.ceil(target.getY() - getY()) + 1));
+        BlockPos column = BlockPos.containing(getX() + horizontal.x * (getBbWidth() * 0.5D + 0.45D),
+                feetY, getZ() + horizontal.z * (getBbWidth() * 0.5D + 0.45D));
+        for (int y = 0; y < height; y++) {
+            BlockPos pos = column.above(y);
+            if (level().getBlockEntity(pos) != null || temporaryBoneWall.containsKey(pos)) continue;
+            var state = level().getBlockState(pos);
+            if (state.isAir() || state.getCollisionShape(level(), pos).isEmpty()) {
+                if (level().setBlockAndUpdate(pos, Blocks.BONE_BLOCK.defaultBlockState())) {
+                    temporaryBoneWall.put(pos.immutable(), state);
+                }
+            }
         }
-        double horizontalSpeed = Math.min(3.0D, Math.max(0.35D, horizontalDistance / horizontalTravelFactor));
-        double verticalSpeed = Math.min(1.65D, Math.max(0.72D,
-                0.62D + Math.max(0.0D, toward.y) * 0.12D + horizontalDistance * 0.025D));
-        setDeltaMovement(horizontal.x * horizontalSpeed, verticalSpeed, horizontal.z * horizontalSpeed);
-        setGlowingTag(false);
-        leapWindupTicks = 0;
-        leapFlightTicks = flightDuration;
-        leapCooldownTicks = 60;
-        climbing = false;
     }
 
     private void faceTarget(Player target) {
@@ -697,6 +652,13 @@ public class HunterEntity extends Monster {
     private Player getHuntTarget() {
         if (targetUuid == null || !(level() instanceof ServerLevel serverLevel)) return getTarget() instanceof Player p ? p : null;
         return serverLevel.getPlayerByUUID(targetUuid);
+    }
+
+
+    @Override
+    public void remove(RemovalReason reason) {
+        removeTemporaryBoneWall();
+        super.remove(reason);
     }
 
     @Override
