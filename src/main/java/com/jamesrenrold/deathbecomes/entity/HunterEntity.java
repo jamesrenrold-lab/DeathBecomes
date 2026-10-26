@@ -595,12 +595,12 @@ public class HunterEntity extends PathfinderMob {
             getNavigation().moveTo(target, 1.3D);
         }
 
-        if (phaseTicks % 20 == 0) {
+        if (phaseTicks % 5 == 0) {
             double dx = getX() - navigationCheckX;
             double dy = getY() - navigationCheckY;
             double dz = getZ() - navigationCheckZ;
             if (dx * dx + dy * dy + dz * dz < 0.09D) {
-                navigationStuckTicks += 20;
+                navigationStuckTicks += 5;
             } else {
                 navigationStuckTicks = 0;
             }
@@ -608,7 +608,7 @@ public class HunterEntity extends PathfinderMob {
             navigationCheckY = getY();
             navigationCheckZ = getZ();
 
-            if (navigationStuckTicks >= 60) {
+            if (navigationStuckTicks >= 5) {
                 getNavigation().stop();
                 clearBlocksInPath(target);
                 navigationStuckTicks = 0;
