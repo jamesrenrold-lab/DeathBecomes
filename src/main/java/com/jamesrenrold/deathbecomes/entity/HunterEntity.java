@@ -23,11 +23,11 @@ import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
-import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
@@ -39,8 +39,9 @@ import java.util.UUID;
 import java.util.HashMap;
 import java.util.Map;
 
-public class HunterEntity extends Monster {
+public class HunterEntity extends PathfinderMob {
     private static final EntityDataAccessor<Integer> TARGET_ID = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.INT);
+    private int chaseTimerTicks;
     private static final EntityDataAccessor<Byte> PHASE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BYTE);
     private static final EntityDataAccessor<Boolean> SHAKE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BOOLEAN);
     private static final byte INTRO = 0, CHASE = 1, CAPTURE = 2, DEPART = 3, ESCAPE = 4, WALK_AWAY = 5,
@@ -77,7 +78,7 @@ public class HunterEntity extends Monster {
     private double throwVelocityZ;
     private final Map<BlockPos, net.minecraft.world.level.block.state.BlockState> temporaryBoneWall = new HashMap<>();
 
-    public HunterEntity(EntityType<? extends Monster> type, Level level) {
+    public HunterEntity(EntityType<? extends PathfinderMob> type, Level level) {
         super(type, level);
         setPersistenceRequired();
     }
@@ -148,6 +149,19 @@ public class HunterEntity extends Monster {
             shakeTicks++;
             if (shakeTicks >= 12) entityData.set(SHAKE, false);
         }
+        if (isChaseTimerPhase(phase)) {
+            chaseTimerTicks++;
+            int secondsRemaining = Math.max(0, (2000 - chaseTimerTicks + 19) / 20);
+            if (chaseTimerTicks % 20 == 0 || chaseTimerTicks >= 2000) {
+                sendChaseTimer(target, secondsRemaining);
+            }
+            if (chaseTimerTicks >= 2000) {
+                stopMusic();
+                removeTemporaryBoneWall();
+                walkAwayFrom(target, "This isn't worth my time.. I'll be seeing you.");
+                return;
+            }
+        }
         if (phase != ESCAPE && phase != WALK_AWAY && (target == null || !target.isAlive())) {
             stopMusic();
             removeTemporaryBoneWall();
@@ -168,7 +182,7 @@ public class HunterEntity extends Monster {
 
         if (phase == CHASE) {
             phaseTicks++;
-            if (phaseTicks >= 2400 || distanceToSqr(target) > 120.0D * 120.0D) {
+            if (distanceToSqr(target) > 120.0D * 120.0D) {
                 stopMusic();
                 flashTargetBeforeLeaving(target);
                 discard();
@@ -285,8 +299,10 @@ public class HunterEntity extends Monster {
         if (phase == WALK_AWAY) {
             phaseTicks++;
             getNavigation().stop();
-            setYRot((float) (Math.atan2(-departureDirection.x, departureDirection.z) * (180.0D / Math.PI)));
-            setYHeadRot(getYRot());
+            float awayYaw = (float) (Math.atan2(-departureDirection.x, departureDirection.z) * (180.0D / Math.PI));
+            setYRot(awayYaw);
+            setYBodyRot(awayYaw);
+            setYHeadRot(awayYaw);
             Vec3 motion = getDeltaMovement();
             setDeltaMovement(departureDirection.x * 0.12D, motion.y, departureDirection.z * 0.12D);
             if (phaseTicks >= 80) {
@@ -301,6 +317,8 @@ public class HunterEntity extends Monster {
     private void startChase(Player target) {
         entityData.set(PHASE, CHASE);
         phaseTicks = 0;
+        chaseTimerTicks = 0;
+        sendChaseTimer(target, 100);
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
@@ -632,15 +650,24 @@ public class HunterEntity extends Monster {
     }
 
     private void walkAwayFrom(Player target) {
-        if (stolenExperience > 0 && target != null) {
-            showActionbar(target, "I still need more strength.. it's never enough.");
+        walkAwayFrom(target, null);
+    }
+
+    private void walkAwayFrom(Player target, String departureLine) {
+        if (target != null) {
+            if (departureLine != null) {
+                showActionbar(target, departureLine);
+            } else if (stolenExperience > 0) {
+                showActionbar(target, "I still need more strength.. it's never enough.");
+            }
         }
-        Vec3 away = position().subtract(target.position());
+        Vec3 away = target == null ? departureDirection : position().subtract(target.position());
         if (away.lengthSqr() < 1.0E-5D) away = new Vec3(0.0D, 0.0D, 1.0D);
         away = away.normalize();
         departureDirection = away;
         float yaw = (float) (Math.atan2(-away.x, away.z) * (180.0D / Math.PI));
         setYRot(yaw);
+        setYBodyRot(yaw);
         setYHeadRot(yaw);
         setTarget(null);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
@@ -679,7 +706,20 @@ public class HunterEntity extends Monster {
 
     private void stopMusic() {
         Player target = getHuntTarget();
-        if (target instanceof ServerPlayer serverPlayer) DeathBecomesNetwork.sendChaseMusic(serverPlayer, false);
+        if (target instanceof ServerPlayer serverPlayer) {
+            DeathBecomesNetwork.sendChaseMusic(serverPlayer, false);
+            DeathBecomesNetwork.sendChaseTimer(serverPlayer, 0);
+        }
+    }
+
+    private void sendChaseTimer(Player target, int secondsRemaining) {
+        if (target instanceof ServerPlayer serverPlayer) {
+            DeathBecomesNetwork.sendChaseTimer(serverPlayer, secondsRemaining);
+        }
+    }
+
+    private static boolean isChaseTimerPhase(byte phase) {
+        return phase == CHASE || phase == COUNTERATTACK || phase == THROW || phase == CAPTURE || phase == DEPART;
     }
 
     private Player getHuntTarget() {
@@ -700,6 +740,7 @@ public class HunterEntity extends Monster {
         if (targetUuid != null) tag.putUUID("Target", targetUuid);
         tag.putByte("Phase", entityData.get(PHASE));
         tag.putInt("PhaseTicks", phaseTicks);
+        tag.putInt("ChaseTimerTicks", chaseTimerTicks);
         tag.putInt("CaptureTicks", captureTicks);
         tag.putFloat("DamageTaken", damageTaken);
         tag.putLong("CaptureStartedAt", captureStartedAt);
@@ -723,6 +764,7 @@ public class HunterEntity extends Monster {
         if (tag.hasUUID("Target")) targetUuid = tag.getUUID("Target");
         entityData.set(PHASE, tag.getByte("Phase"));
         phaseTicks = tag.getInt("PhaseTicks");
+        chaseTimerTicks = tag.getInt("ChaseTimerTicks");
         captureTicks = tag.getInt("CaptureTicks");
         damageTaken = tag.getFloat("DamageTaken");
         captureStartedAt = tag.getLong("CaptureStartedAt");
