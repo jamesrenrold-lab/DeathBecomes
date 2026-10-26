@@ -69,8 +69,6 @@ public class HunterEntity extends PathfinderMob {
     private double counterX;
     private double counterY;
     private double counterZ;
-    private int quickRampTicks = -1;
-    private boolean speedRampAtMaximum;
     private int counterRecoveryTicks;
     private int throwTicks;
     private int wallHoldTicks;
@@ -327,7 +325,7 @@ public class HunterEntity extends PathfinderMob {
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
-        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.16D);
+        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.18D);
         counterRecoveryTicks = 0;
         climbing = false;
         navigationStuckTicks = 0;
@@ -458,8 +456,6 @@ public class HunterEntity extends PathfinderMob {
     }
 
     private void resumeChaseAfterThrow(Player target) {
-        quickRampTicks = 0;
-        speedRampAtMaximum = false;
         counterRecoveryTicks = 20;
         phaseTicks = 0;
         navigationStuckTicks = 0;
@@ -467,6 +463,7 @@ public class HunterEntity extends PathfinderMob {
         navigationCheckY = getY();
         navigationCheckZ = getZ();
         entityData.set(PHASE, CHASE);
+        updateChaseSpeed();
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
@@ -534,28 +531,12 @@ public class HunterEntity extends PathfinderMob {
     }
 
     private void updateChaseSpeed() {
-        double progress = Math.min(1.0D, phaseTicks / 2400.0D);
+        double progress = Math.min(1.0D, chaseTimerTicks / (double) CHASE_DURATION_TICKS);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
         Player target = getHuntTarget();
         int bonusHearts = target == null ? 0 : HeartFragmentItem.getHeartCount(target);
         double heartMultiplier = Math.pow(1.2D, bonusHearts);
-        double chaseSpeed;
-        if (quickRampTicks >= 0) {
-            int elapsed = quickRampTicks++;
-            if (elapsed < 20) {
-                chaseSpeed = 0.06D;
-            } else {
-                chaseSpeed = 0.06D + 0.20D * Math.min(1.0D, (elapsed - 20) / 200.0D);
-                if (elapsed >= 220) {
-                    quickRampTicks = -1;
-                    speedRampAtMaximum = true;
-                }
-            }
-        } else if (speedRampAtMaximum) {
-            chaseSpeed = 0.26D;
-        } else {
-            chaseSpeed = 0.16D + 0.10D * progress;
-        }
+        double chaseSpeed = 0.18D + 0.08D * progress;
         if (speed != null) speed.setBaseValue(chaseSpeed * heartMultiplier);
     }
 
@@ -609,7 +590,6 @@ public class HunterEntity extends PathfinderMob {
             navigationCheckZ = getZ();
 
             if (navigationStuckTicks >= 5) {
-                getNavigation().stop();
                 clearBlocksInPath(target);
                 navigationStuckTicks = 0;
             }
@@ -791,8 +771,6 @@ public class HunterEntity extends PathfinderMob {
         tag.putDouble("CounterX", counterX);
         tag.putDouble("CounterY", counterY);
         tag.putDouble("CounterZ", counterZ);
-        tag.putInt("QuickRampTicks", quickRampTicks);
-        tag.putBoolean("SpeedRampAtMaximum", speedRampAtMaximum);
         tag.putInt("CounterRecoveryTicks", counterRecoveryTicks);
     }
 
@@ -815,8 +793,6 @@ public class HunterEntity extends PathfinderMob {
         counterX = tag.getDouble("CounterX");
         counterY = tag.getDouble("CounterY");
         counterZ = tag.getDouble("CounterZ");
-        if (tag.contains("QuickRampTicks")) quickRampTicks = tag.getInt("QuickRampTicks");
-        speedRampAtMaximum = tag.getBoolean("SpeedRampAtMaximum");
         counterRecoveryTicks = tag.getInt("CounterRecoveryTicks");
     }
 
