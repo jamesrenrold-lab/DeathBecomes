@@ -60,6 +60,10 @@ public class HunterEntity extends PathfinderMob {
     private boolean captureHadHeart;
     private boolean killAfterStare;
     private boolean climbing;
+    private int navigationStuckTicks;
+    private double navigationCheckX;
+    private double navigationCheckY;
+    private double navigationCheckZ;
     private int counterCatchCount;
     private int counterWindowTicks;
     private double counterX;
@@ -195,17 +199,20 @@ public class HunterEntity extends PathfinderMob {
             updateChaseSpeed();
             setTarget(target);
             if (counterRecoveryTicks > 0) counterRecoveryTicks--;
-            faceTarget(target);
             boolean elevatedTarget = target.getY() >= getY() + 2.0D;
-            clearBlocksInPath(target);
             if (elevatedTarget) {
+                getNavigation().stop();
                 climbing = true;
+                navigationStuckTicks = 0;
+                navigationCheckX = getX();
+                navigationCheckY = getY();
+                navigationCheckZ = getZ();
                 if (!hasClimbSurface(target)) createBoneClimbStep(target);
                 climbToward(target);
             } else {
                 climbing = false;
                 removeTemporaryBoneWall();
-                runToward(target);
+                navigateToward(target);
             }
             if (counterRecoveryTicks <= 0 && distanceToSqr(target) <= 2.25D) startCapture(target);
             return;
@@ -323,6 +330,10 @@ public class HunterEntity extends PathfinderMob {
         getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.16D);
         counterRecoveryTicks = 0;
         climbing = false;
+        navigationStuckTicks = 0;
+        navigationCheckX = getX();
+        navigationCheckY = getY();
+        navigationCheckZ = getZ();
         setGlowingTag(false);
         entityData.set(SHAKE, true);
         shakeTicks = 0;
@@ -451,6 +462,10 @@ public class HunterEntity extends PathfinderMob {
         speedRampAtMaximum = false;
         counterRecoveryTicks = 20;
         phaseTicks = 0;
+        navigationStuckTicks = 0;
+        navigationCheckX = getX();
+        navigationCheckY = getY();
+        navigationCheckZ = getZ();
         entityData.set(PHASE, CHASE);
         setInvisible(false);
         setInvulnerable(false);
@@ -575,16 +590,30 @@ public class HunterEntity extends PathfinderMob {
         setDeltaMovement(Vec3.ZERO);
     }
 
-    private void runToward(Player target) {
-        getNavigation().stop();
-        Vec3 toward = target.position().subtract(position());
-        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
-        if (horizontal.lengthSqr() < 1.0E-5D) return;
-        horizontal = horizontal.normalize();
-        double speed = getAttributeValue(Attributes.MOVEMENT_SPEED) * 1.3D;
-        Vec3 existing = getDeltaMovement();
-        move(MoverType.SELF, new Vec3(horizontal.x * speed, existing.y, horizontal.z * speed));
-        setDeltaMovement(0.0D, getDeltaMovement().y, 0.0D);
+    private void navigateToward(Player target) {
+        if (phaseTicks % 10 == 1) {
+            getNavigation().moveTo(target, 1.3D);
+        }
+
+        if (phaseTicks % 20 == 0) {
+            double dx = getX() - navigationCheckX;
+            double dy = getY() - navigationCheckY;
+            double dz = getZ() - navigationCheckZ;
+            if (dx * dx + dy * dy + dz * dz < 0.09D) {
+                navigationStuckTicks += 20;
+            } else {
+                navigationStuckTicks = 0;
+            }
+            navigationCheckX = getX();
+            navigationCheckY = getY();
+            navigationCheckZ = getZ();
+
+            if (navigationStuckTicks >= 60) {
+                getNavigation().stop();
+                clearBlocksInPath(target);
+                navigationStuckTicks = 0;
+            }
+        }
     }
 
     private void clearBlocksInPath(Player target) {
