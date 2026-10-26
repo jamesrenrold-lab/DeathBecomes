@@ -325,7 +325,7 @@ public class HunterEntity extends PathfinderMob {
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
-        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.18D);
+        getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.26D);
         counterRecoveryTicks = 0;
         climbing = false;
         navigationStuckTicks = 0;
@@ -531,12 +531,12 @@ public class HunterEntity extends PathfinderMob {
     }
 
     private void updateChaseSpeed() {
-        double progress = Math.min(1.0D, chaseTimerTicks / (double) CHASE_DURATION_TICKS);
+        double progress = Math.min(1.0D, chaseTimerTicks / 600.0D);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
         Player target = getHuntTarget();
         int bonusHearts = target == null ? 0 : HeartFragmentItem.getHeartCount(target);
         double heartMultiplier = Math.pow(1.2D, bonusHearts);
-        double chaseSpeed = 0.18D + 0.08D * progress;
+        double chaseSpeed = 0.26D + 0.14D * progress;
         if (speed != null) speed.setBaseValue(chaseSpeed * heartMultiplier);
     }
 
@@ -580,10 +580,25 @@ public class HunterEntity extends PathfinderMob {
             double dx = getX() - navigationCheckX;
             double dy = getY() - navigationCheckY;
             double dz = getZ() - navigationCheckZ;
-            if (dx * dx + dy * dy + dz * dz < 0.09D) {
-                navigationStuckTicks += 5;
-            } else {
+            boolean advancingOnPath = false;
+            var path = getNavigation().getPath();
+            if (path != null && !path.isDone()) {
+                var nextNode = path.getNextNode();
+                double nodeX = nextNode.x + 0.5D;
+                double nodeY = nextNode.y;
+                double nodeZ = nextNode.z + 0.5D;
+                double previousNodeDistance = (navigationCheckX - nodeX) * (navigationCheckX - nodeX)
+                        + (navigationCheckY - nodeY) * (navigationCheckY - nodeY)
+                        + (navigationCheckZ - nodeZ) * (navigationCheckZ - nodeZ);
+                double currentNodeDistance = (getX() - nodeX) * (getX() - nodeX)
+                        + (getY() - nodeY) * (getY() - nodeY)
+                        + (getZ() - nodeZ) * (getZ() - nodeZ);
+                advancingOnPath = previousNodeDistance - currentNodeDistance >= 0.04D;
+            }
+            if (advancingOnPath || dx * dx + dy * dy + dz * dz >= 0.09D && !horizontalCollision) {
                 navigationStuckTicks = 0;
+            } else {
+                navigationStuckTicks += 5;
             }
             navigationCheckX = getX();
             navigationCheckY = getY();
@@ -608,9 +623,11 @@ public class HunterEntity extends PathfinderMob {
 
         // Only clear the first obstacle inside the next movement step. Once that
         // wall is opened, the hunter advances and only breaks what still blocks him.
+        double halfWidth = getBbWidth() * 0.48D;
+        double[] lateralOffsets = new double[]{-halfWidth, -0.20D, 0.0D, 0.20D, halfWidth};
         for (double distance = 0.20D; distance <= reach; distance += 0.15D) {
             boolean obstructionFound = false;
-            for (double lateral : new double[]{-0.25D, 0.0D, 0.25D}) {
+            for (double lateral : lateralOffsets) {
                 for (int height = 0; height < clearHeight; height++) {
                     BlockPos pos = BlockPos.containing(getX() + horizontal.x * distance + side.x * lateral,
                             feetY + height, getZ() + horizontal.z * distance + side.z * lateral);
