@@ -78,6 +78,8 @@ public class HunterEntity extends PathfinderMob {
     private double throwEndZ;
     private double throwVelocityX;
     private double throwVelocityZ;
+    private double throwSpeed;
+    private boolean throwImpactApplied;
     private final Map<BlockPos, net.minecraft.world.level.block.state.BlockState> temporaryBoneWall = new HashMap<>();
 
     public HunterEntity(EntityType<? extends PathfinderMob> type, Level level) {
@@ -242,20 +244,14 @@ public class HunterEntity extends PathfinderMob {
             getNavigation().stop();
             target.setSprinting(false);
             target.fallDistance = 0.0F;
-            if (throwTicks < 12) {
-                // Give the player real forward momentum so the throw visibly carries
-                // them into the wall. Keep refreshing it during the short launch window
-                // to prevent client input from cancelling the forced throw.
+            if (!throwImpactApplied) {
                 throwTicks++;
-                target.setDeltaMovement(throwVelocityX * 1.35D, 0.28D, throwVelocityZ * 1.35D);
-                target.hurtMarked = true;
-                if (throwTicks == 12) {
+                if (target.horizontalCollision || throwTicks >= 12) {
                     forcePlayerToThrowImpact(target);
+                    throwImpactApplied = true;
                     wallHoldTicks = 40;
                 }
             } else {
-                target.setPos(throwEndX, throwEndY, throwEndZ);
-                target.setDeltaMovement(Vec3.ZERO);
                 if (wallHoldTicks > 0) wallHoldTicks--;
                 if (wallHoldTicks <= 0) {
                     removeTemporaryBoneWall();
@@ -424,8 +420,12 @@ public class HunterEntity extends PathfinderMob {
             throwVelocityX = direction.x;
             throwVelocityZ = direction.z;
         }
+        throwSpeed = Math.min(1.8D, Math.max(0.9D, wallDistance * 0.16D));
         throwTicks = 0;
         wallHoldTicks = 0;
+        throwImpactApplied = false;
+        target.setDeltaMovement(throwVelocityX * throwSpeed, 0.25D, throwVelocityZ * throwSpeed);
+        target.hurtMarked = true;
         entityData.set(PHASE, THROW);
         phaseTicks = 0;
         setTarget(null);
@@ -436,12 +436,14 @@ public class HunterEntity extends PathfinderMob {
     }
 
     private void forcePlayerToThrowImpact(Player target) {
-        target.setPos(throwEndX, throwEndY, throwEndZ);
-        target.setDeltaMovement(Vec3.ZERO);
         if (target instanceof ServerPlayer serverPlayer) {
             serverPlayer.connection.teleport(throwEndX, throwEndY, throwEndZ,
                     target.getYRot(), target.getXRot());
+        } else {
+            target.setPos(throwEndX, throwEndY, throwEndZ);
         }
+        target.setDeltaMovement(Vec3.ZERO);
+        target.fallDistance = 0.0F;
     }
 
     private void resumeChaseAfterThrow(Player target) {
@@ -593,9 +595,13 @@ public class HunterEntity extends PathfinderMob {
         Vec3 side = new Vec3(-horizontal.z, 0.0D, horizontal.x);
         int feetY = (int) Math.floor(getY());
         int clearHeight = Math.max(1, (int) Math.ceil(getBbHeight()));
-        double reach = Math.max(1.1D, getAttributeValue(Attributes.MOVEMENT_SPEED) * 5.0D);
-        for (double distance = 0.25D; distance <= reach; distance += 0.35D) {
-            for (double lateral : new double[]{-0.30D, 0.0D, 0.30D}) {
+        double reach = getAttributeValue(Attributes.MOVEMENT_SPEED) * 1.3D + getBbWidth() * 0.5D + 0.12D;
+
+        // Only clear the first obstacle inside the next movement step. Once that
+        // wall is opened, the hunter advances and only breaks what still blocks him.
+        for (double distance = 0.20D; distance <= reach; distance += 0.15D) {
+            boolean obstructionFound = false;
+            for (double lateral : new double[]{-0.25D, 0.0D, 0.25D}) {
                 for (int height = 0; height < clearHeight; height++) {
                     BlockPos pos = BlockPos.containing(getX() + horizontal.x * distance + side.x * lateral,
                             feetY + height, getZ() + horizontal.z * distance + side.z * lateral);
@@ -604,9 +610,10 @@ public class HunterEntity extends PathfinderMob {
                     var state = level().getBlockState(pos);
                     if (state.isAir() || !state.getFluidState().isEmpty()
                             || state.getDestroySpeed(level(), pos) < 0.0F) continue;
-                    level().destroyBlock(pos, false);
+                    if (level().destroyBlock(pos, false)) obstructionFound = true;
                 }
             }
+            if (obstructionFound) return;
         }
     }
 
