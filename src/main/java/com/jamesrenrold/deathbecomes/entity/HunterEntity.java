@@ -60,6 +60,8 @@ public class HunterEntity extends PathfinderMob {
     private boolean captureHadHeart;
     private boolean killAfterStare;
     private boolean climbing;
+    private int climbStuckTicks;
+    private double climbProgressY;
     private int navigationStuckTicks;
     private double navigationCheckX;
     private double navigationCheckY;
@@ -188,15 +190,29 @@ public class HunterEntity extends PathfinderMob {
             boolean elevatedTarget = target.getY() >= getY() + 2.0D;
             if (elevatedTarget) {
                 getNavigation().stop();
-                climbing = true;
-                navigationStuckTicks = 0;
-                navigationCheckX = getX();
-                navigationCheckY = getY();
-                navigationCheckZ = getZ();
-                if (!hasClimbSurface(target)) createBoneClimbStep(target);
+                if (!climbing) {
+                    climbing = true;
+                    climbStuckTicks = 0;
+                    climbProgressY = getY();
+                }
+
+                // Try to scale the blocks directly for half a second before
+                // adding a bone foothold. Reset the timer whenever the hunter
+                // gains height, including while standing on an existing step.
+                if (getY() >= climbProgressY + 0.1D) {
+                    climbProgressY = getY();
+                    climbStuckTicks = 0;
+                } else {
+                    climbStuckTicks++;
+                }
+                if (climbStuckTicks >= 10) {
+                    createBoneClimbStep(target);
+                    climbStuckTicks = 0;
+                }
                 climbToward(target);
             } else {
                 climbing = false;
+                climbStuckTicks = 0;
                 removeTemporaryBoneWall();
                 navigateToward(target);
             }
@@ -490,7 +506,7 @@ public class HunterEntity extends PathfinderMob {
         Player target = getHuntTarget();
         int bonusHearts = target == null ? 0 : HeartFragmentItem.getHeartCount(target);
         double heartMultiplier = Math.pow(1.2D, bonusHearts);
-        double chaseSpeed = 0.26D + 0.14D * progress;
+        double chaseSpeed = 0.24D + 0.12D * progress;
         if (speed != null) speed.setBaseValue(chaseSpeed * heartMultiplier);
     }
 
