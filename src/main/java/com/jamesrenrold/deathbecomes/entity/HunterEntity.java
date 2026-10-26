@@ -46,6 +46,8 @@ public class HunterEntity extends PathfinderMob {
     private static final EntityDataAccessor<Boolean> SHAKE = SynchedEntityData.defineId(HunterEntity.class, EntityDataSerializers.BOOLEAN);
     private static final byte INTRO = 0, CHASE = 1, CAPTURE = 2, DEPART = 3, ESCAPE = 4, WALK_AWAY = 5,
             COUNTERATTACK = 6, THROW = 7;
+    private static final int CHASE_DURATION_SECONDS = 80;
+    private static final int CHASE_DURATION_TICKS = CHASE_DURATION_SECONDS * 20;
     private UUID targetUuid;
     private int phaseTicks;
     private int captureTicks;
@@ -151,11 +153,11 @@ public class HunterEntity extends PathfinderMob {
         }
         if (isChaseTimerPhase(phase)) {
             chaseTimerTicks++;
-            int secondsRemaining = Math.max(0, (2000 - chaseTimerTicks + 19) / 20);
-            if (chaseTimerTicks % 20 == 0 || chaseTimerTicks >= 2000) {
+            int secondsRemaining = Math.max(0, (CHASE_DURATION_TICKS - chaseTimerTicks + 19) / 20);
+            if (chaseTimerTicks % 20 == 0 || chaseTimerTicks >= CHASE_DURATION_TICKS) {
                 sendChaseTimer(target, secondsRemaining);
             }
-            if (chaseTimerTicks >= 2000) {
+            if (chaseTimerTicks >= CHASE_DURATION_TICKS) {
                 stopMusic();
                 removeTemporaryBoneWall();
                 walkAwayFrom(target, "This isn't worth my time.. I'll be seeing you.");
@@ -318,7 +320,7 @@ public class HunterEntity extends PathfinderMob {
         entityData.set(PHASE, CHASE);
         phaseTicks = 0;
         chaseTimerTicks = 0;
-        sendChaseTimer(target, 100);
+        sendChaseTimer(target, CHASE_DURATION_SECONDS);
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
@@ -396,7 +398,7 @@ public class HunterEntity extends PathfinderMob {
         if (direction.lengthSqr() < 1.0E-5D) direction = new Vec3(0.0D, 0.0D, 1.0D);
         direction = direction.normalize();
         target.setHealth(Math.max(0.5F, target.getHealth() * 0.60F));
-        double wallDistance = findThreeByFourWallDistance(target, direction);
+        double wallDistance = findNearbyWallDistance(target, direction);
         if (wallDistance < 0.0D) {
             wallDistance = 8.0D;
             createTemporaryBoneWall(target, direction, wallDistance);
@@ -462,9 +464,9 @@ public class HunterEntity extends PathfinderMob {
         };
     }
 
-    private double findThreeByFourWallDistance(Player target, Vec3 direction) {
+    private double findNearbyWallDistance(Player target, Vec3 direction) {
         Vec3 side = boneWallSide(direction);
-        for (int distance = 5; distance <= 10; distance++) {
+        for (int distance = 2; distance <= 12; distance++) {
             int solidBlocks = 0;
             java.util.Set<BlockPos> checked = new java.util.HashSet<>();
             for (int lateral = -1; lateral <= 1; lateral++) {
@@ -477,7 +479,7 @@ public class HunterEntity extends PathfinderMob {
                     }
                 }
             }
-            if (solidBlocks >= 12) return distance;
+            if (solidBlocks >= 6) return distance;
         }
         return -1.0D;
     }
@@ -524,9 +526,9 @@ public class HunterEntity extends PathfinderMob {
         if (quickRampTicks >= 0) {
             int elapsed = quickRampTicks++;
             if (elapsed < 20) {
-                chaseSpeed = 0.16D;
+                chaseSpeed = 0.06D;
             } else {
-                chaseSpeed = 0.16D + 0.10D * Math.min(1.0D, (elapsed - 20) / 200.0D);
+                chaseSpeed = 0.06D + 0.20D * Math.min(1.0D, (elapsed - 20) / 200.0D);
                 if (elapsed >= 220) {
                     quickRampTicks = -1;
                     speedRampAtMaximum = true;
