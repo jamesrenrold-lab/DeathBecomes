@@ -50,7 +50,7 @@ public class DeathBecomes {
     public static final DeferredRegister<SoundEvent> SOUND_EVENTS = DeferredRegister.create(ForgeRegistries.SOUND_EVENTS, MOD_ID);
 
     public static final RegistryObject<EntityType<HunterEntity>> HUNTER = ENTITY_TYPES.register("hunter",
-            () -> EntityType.Builder.of(HunterEntity::new, MobCategory.MONSTER)
+            () -> EntityType.Builder.of(HunterEntity::new, MobCategory.CREATURE)
                     .sized(0.72F, 2.16F)
                     .clientTrackingRange(16)
                     .updateInterval(1)
