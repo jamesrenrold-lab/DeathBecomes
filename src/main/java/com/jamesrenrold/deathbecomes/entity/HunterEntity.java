@@ -66,21 +66,9 @@ public class HunterEntity extends PathfinderMob {
     private double navigationCheckZ;
     private int counterCatchCount;
     private int counterWindowTicks;
-    private double counterX;
-    private double counterY;
-    private double counterZ;
     private int counterRecoveryTicks;
     private int throwTicks;
     private int wallHoldTicks;
-    private double throwStartX;
-    private double throwStartY;
-    private double throwStartZ;
-    private double throwEndX;
-    private double throwEndY;
-    private double throwEndZ;
-    private double throwVelocityX;
-    private double throwVelocityZ;
-    private double throwSpeed;
     private boolean throwImpactApplied;
     private final Map<BlockPos, net.minecraft.world.level.block.state.BlockState> temporaryBoneWall = new HashMap<>();
 
@@ -236,8 +224,6 @@ public class HunterEntity extends PathfinderMob {
         if (phase == COUNTERATTACK) {
             getNavigation().stop();
             trackTargetWithHead(target);
-            target.setPos(counterX, counterY, counterZ);
-            target.setDeltaMovement(Vec3.ZERO);
             target.setSprinting(false);
             counterWindowTicks--;
             if (counterWindowTicks == 60) showActionbar(target, counterCatchMessage());
@@ -252,7 +238,6 @@ public class HunterEntity extends PathfinderMob {
             if (!throwImpactApplied) {
                 throwTicks++;
                 if (target.horizontalCollision || throwTicks >= 12) {
-                    forcePlayerToThrowImpact(target);
                     throwImpactApplied = true;
                     wallHoldTicks = 40;
                 }
@@ -354,9 +339,6 @@ public class HunterEntity extends PathfinderMob {
     private void beginCounterattack(Player target) {
         counterCatchCount++;
         counterWindowTicks = 80;
-        counterX = target.getX();
-        counterY = target.getY();
-        counterZ = target.getZ();
         captureStartedAt = level().getGameTime();
         target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 8L * 20L);
         DeathBecomes.applyManaDebuff(target);
@@ -409,31 +391,14 @@ public class HunterEntity extends PathfinderMob {
             createTemporaryBoneWall(target, direction, wallDistance);
         }
 
-        throwStartX = target.getX();
-        throwStartY = target.getY();
-        throwStartZ = target.getZ();
-        BlockPos wallCenter = BlockPos.containing(target.getX() + direction.x * wallDistance,
-                target.getY(), target.getZ() + direction.z * wallDistance);
-        throwEndX = wallCenter.getX() + 0.5D;
-        throwEndY = target.getY();
-        throwEndZ = wallCenter.getZ() + 0.5D;
-        double playerHalfWidth = target.getBbWidth() * 0.5D + 0.02D;
-        if (Math.abs(direction.x) > Math.abs(direction.z)) {
-            double wallFaceX = direction.x > 0.0D ? wallCenter.getX() : wallCenter.getX() + 1.0D;
-            throwEndX = wallFaceX - Math.signum(direction.x) * playerHalfWidth;
-            throwVelocityX = direction.x;
-            throwVelocityZ = direction.z;
-        } else {
-            double wallFaceZ = direction.z > 0.0D ? wallCenter.getZ() : wallCenter.getZ() + 1.0D;
-            throwEndZ = wallFaceZ - Math.signum(direction.z) * playerHalfWidth;
-            throwVelocityX = direction.x;
-            throwVelocityZ = direction.z;
-        }
-        throwSpeed = Math.min(1.8D, Math.max(0.9D, wallDistance * 0.16D));
+        double throwSpeed = Math.min(1.8D, Math.max(0.9D, wallDistance * 0.16D));
         throwTicks = 0;
         wallHoldTicks = 0;
         throwImpactApplied = false;
-        target.setDeltaMovement(throwVelocityX * throwSpeed, 0.25D, throwVelocityZ * throwSpeed);
+        Vec3 existingMotion = target.getDeltaMovement();
+        target.setDeltaMovement(existingMotion.x * 0.2D + direction.x * throwSpeed,
+                Math.max(0.0D, existingMotion.y) + 0.25D,
+                existingMotion.z * 0.2D + direction.z * throwSpeed);
         target.hurtMarked = true;
         entityData.set(PHASE, THROW);
         phaseTicks = 0;
@@ -442,17 +407,6 @@ public class HunterEntity extends PathfinderMob {
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
         if (speed != null) speed.setBaseValue(0.0D);
         getNavigation().stop();
-    }
-
-    private void forcePlayerToThrowImpact(Player target) {
-        if (target instanceof ServerPlayer serverPlayer) {
-            serverPlayer.connection.teleport(throwEndX, throwEndY, throwEndZ,
-                    target.getYRot(), target.getXRot());
-        } else {
-            target.setPos(throwEndX, throwEndY, throwEndZ);
-        }
-        target.setDeltaMovement(Vec3.ZERO);
-        target.fallDistance = 0.0F;
     }
 
     private void resumeChaseAfterThrow(Player target) {
@@ -785,9 +739,6 @@ public class HunterEntity extends PathfinderMob {
         tag.putBoolean("KillAfterStare", killAfterStare);
         tag.putInt("CounterCatchCount", counterCatchCount);
         tag.putInt("CounterWindowTicks", counterWindowTicks);
-        tag.putDouble("CounterX", counterX);
-        tag.putDouble("CounterY", counterY);
-        tag.putDouble("CounterZ", counterZ);
         tag.putInt("CounterRecoveryTicks", counterRecoveryTicks);
     }
 
@@ -807,9 +758,6 @@ public class HunterEntity extends PathfinderMob {
         killAfterStare = tag.getBoolean("KillAfterStare");
         counterCatchCount = tag.getInt("CounterCatchCount");
         counterWindowTicks = tag.getInt("CounterWindowTicks");
-        counterX = tag.getDouble("CounterX");
-        counterY = tag.getDouble("CounterY");
-        counterZ = tag.getDouble("CounterZ");
         counterRecoveryTicks = tag.getInt("CounterRecoveryTicks");
     }
 
