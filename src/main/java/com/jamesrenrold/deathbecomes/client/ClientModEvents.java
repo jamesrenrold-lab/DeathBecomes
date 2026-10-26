@@ -2,22 +2,29 @@ package com.jamesrenrold.deathbecomes.client;
 
 import com.jamesrenrold.deathbecomes.DeathBecomes;
 import com.jamesrenrold.deathbecomes.entity.HunterEntity;
+import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.EntityRenderersEvent;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.client.event.ViewportEvent;
+import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
 @Mod.EventBusSubscriber(modid = DeathBecomes.MOD_ID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class ClientModEvents {
     private static volatile long blackScreenUntil;
+    private static volatile int chaseSecondsRemaining;
 
     private ClientModEvents() { }
 
     public static void flashBlackScreen(int durationTicks) {
         blackScreenUntil = System.currentTimeMillis() + Math.max(1, durationTicks) * 50L;
+    }
+
+    public static void setChaseTimer(int secondsRemaining) {
+        chaseSecondsRemaining = Math.max(0, secondsRemaining);
     }
 
     @SubscribeEvent
@@ -39,6 +46,16 @@ public final class ClientModEvents {
             event.setYaw(event.getYaw() + wave * 0.45F);
             event.setPitch(event.getPitch() + Math.abs(wave) * 0.35F);
             event.setRoll(event.getRoll() + wave * 0.7F);
+        }
+
+        @SubscribeEvent
+        public static void renderChaseTimer(RenderGuiOverlayEvent.Post event) {
+            int seconds = chaseSecondsRemaining;
+            if (seconds <= 0 || event.getOverlay() != VanillaGuiOverlay.HOTBAR.type()) return;
+            String label = String.format(java.util.Locale.ROOT, "CHASE %d:%02d", seconds / 60, seconds % 60);
+            var font = Minecraft.getInstance().font;
+            int x = event.getWindow().getGuiScaledWidth() - font.width(label) - 8;
+            event.getGuiGraphics().drawString(font, label, x, 8, 0xFFFF4040, true);
         }
 
         @SubscribeEvent
