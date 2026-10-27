@@ -2,7 +2,6 @@ package com.jamesrenrold.attributecommandpersist;
 
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
-import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.player.PlayerEvent;
@@ -29,17 +28,10 @@ public final class AttributeCommandPersist {
             AttributeInstance newInstance = replacement.getAttribute(attribute);
             if (oldInstance == null || newInstance == null) continue;
 
-            // /attribute ... base set changes the base value. Copying only the
-            // base avoids carrying temporary modifiers contributed by effects.
-            newInstance.setBaseValue(oldInstance.getBaseValue());
-
-            // Attribute-command modifier adds are permanent. Potion/effect
-            // modifiers are transient and therefore are deliberately omitted.
-            for (AttributeModifier modifier : oldInstance.getPermanentModifiers()) {
-                AttributeModifier existing = newInstance.getModifier(modifier.getId());
-                if (existing != null) newInstance.removeModifier(modifier.getId());
-                newInstance.addPermanentModifier(modifier);
-            }
+            // AttributeInstance.save() contains its base and permanent
+            // modifiers. Temporary effect modifiers are transient and are
+            // intentionally excluded from that serialized snapshot.
+            newInstance.load(oldInstance.save());
         }
     }
 }
