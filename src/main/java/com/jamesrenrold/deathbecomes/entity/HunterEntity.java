@@ -24,13 +24,13 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.PathfinderMob;
-import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.registries.ForgeRegistries;
 import org.joml.Vector3f;
@@ -59,9 +59,6 @@ public class HunterEntity extends PathfinderMob {
     private int stolenExperience;
     private boolean captureHadHeart;
     private boolean killAfterStare;
-    private boolean climbing;
-    private int climbStuckTicks;
-    private double climbProgressY;
     private int navigationStuckTicks;
     private double navigationCheckX;
     private double navigationCheckY;
@@ -76,6 +73,7 @@ public class HunterEntity extends PathfinderMob {
 
     public HunterEntity(EntityType<? extends PathfinderMob> type, Level level) {
         super(type, level);
+        setMaxUpStep(1.0F);
         setPersistenceRequired();
     }
 
@@ -187,35 +185,7 @@ public class HunterEntity extends PathfinderMob {
             updateChaseSpeed();
             setTarget(target);
             if (counterRecoveryTicks > 0) counterRecoveryTicks--;
-            boolean elevatedTarget = target.getY() >= getY() + 2.0D;
-            if (elevatedTarget) {
-                getNavigation().stop();
-                if (!climbing) {
-                    climbing = true;
-                    climbStuckTicks = 0;
-                    climbProgressY = getY();
-                }
-
-                // Try to scale the blocks directly for half a second before
-                // adding a bone foothold. Reset the timer whenever the hunter
-                // gains height, including while standing on an existing step.
-                if (getY() >= climbProgressY + 0.1D) {
-                    climbProgressY = getY();
-                    climbStuckTicks = 0;
-                } else {
-                    climbStuckTicks++;
-                }
-                if (climbStuckTicks >= 10) {
-                    createBoneClimbStep(target);
-                    climbStuckTicks = 0;
-                }
-                climbToward(target);
-            } else {
-                climbing = false;
-                climbStuckTicks = 0;
-                removeTemporaryBoneWall();
-                navigateToward(target);
-            }
+            navigateToward(target);
             if (counterRecoveryTicks <= 0 && distanceToSqr(target) <= 2.25D) startCapture(target);
             return;
         }
@@ -328,7 +298,6 @@ public class HunterEntity extends PathfinderMob {
         setTarget(target);
         getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.26D);
         counterRecoveryTicks = 0;
-        climbing = false;
         navigationStuckTicks = 0;
         navigationCheckX = getX();
         navigationCheckY = getY();
@@ -510,37 +479,6 @@ public class HunterEntity extends PathfinderMob {
         if (speed != null) speed.setBaseValue(chaseSpeed * heartMultiplier);
     }
 
-    private boolean hasClimbSurface(Player target) {
-        Vec3 toward = target.position().subtract(position());
-        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
-        if (horizontal.lengthSqr() < 1.0E-5D) return false;
-        horizontal = horizontal.normalize();
-        boolean hasWall = false;
-        int scanHeight = Math.min(8, Math.max(1, (int) Math.ceil(target.getY() - getY()) + 1));
-        for (int height = 0; height <= scanHeight; height++) {
-            Vec3 wallProbe = position().add(horizontal.scale(getBbWidth() * 0.5D + 0.12D))
-                    .add(0.0D, height + 0.1D, 0.0D);
-            BlockPos wallPos = BlockPos.containing(wallProbe);
-            if (!level().getBlockState(wallPos).getCollisionShape(level(), wallPos).isEmpty()) {
-                hasWall = true;
-                break;
-            }
-        }
-        return hasWall;
-    }
-
-    private void climbToward(Player target) {
-        getNavigation().stop();
-        faceTarget(target);
-        Vec3 toward = target.position().subtract(position());
-        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
-        if (horizontal.lengthSqr() > 1.0E-5D) horizontal = horizontal.normalize();
-        double verticalStep = Math.min(1.0D, Math.max(0.65D, target.getY() - getY()));
-        double forwardStep = getAttributeValue(Attributes.MOVEMENT_SPEED) * 1.3D;
-        move(MoverType.SELF, new Vec3(horizontal.x * forwardStep, verticalStep, horizontal.z * forwardStep));
-        setDeltaMovement(Vec3.ZERO);
-    }
-
     private void navigateToward(Player target) {
         if (phaseTicks % 10 == 1) {
             getNavigation().moveTo(target, 1.3D);
@@ -575,10 +513,37 @@ public class HunterEntity extends PathfinderMob {
             navigationCheckZ = getZ();
 
             if (navigationStuckTicks >= 5) {
-                clearBlocksInPath(target);
+                if (!tryHighJump(target)) clearBlocksInPath(target);
                 navigationStuckTicks = 0;
             }
         }
+    }
+
+    private boolean tryHighJump(Player target) {
+        if (!onGround() || target.getY() < getY() + 1.0D) return false;
+
+        var path = getNavigation().getPath();
+        boolean pathWantsHigherGround = false;
+        Vec3 aim = target.position().subtract(position());
+        if (path != null && !path.isDone()) {
+            var nextNode = path.getNextNode();
+            pathWantsHigherGround = nextNode.y > getBlockY();
+            aim = new Vec3(nextNode.x + 0.5D - getX(), 0.0D, nextNode.z + 0.5D - getZ());
+        }
+
+        // Normal navigation handles stairs and ordinary steps. Jump only after
+        // its route stops advancing and the next point or target is above us.
+        if (!horizontalCollision && pathWantsHigherGround) return false;
+        if (aim.horizontalDistanceSqr() < 1.0E-5D) return false;
+        AABB jumpSpace = getBoundingBox().expandTowards(0.0D, 3.0D, 0.0D);
+        if (!level().noCollision(this, jumpSpace)) return false;
+
+        aim = new Vec3(aim.x, 0.0D, aim.z).normalize();
+        Vec3 motion = getDeltaMovement();
+        setDeltaMovement(motion.x * 0.35D + aim.x * 0.12D, 0.72D,
+                motion.z * 0.35D + aim.z * 0.12D);
+        hasImpulse = true;
+        return true;
     }
 
     private void clearBlocksInPath(Player target) {
@@ -610,23 +575,6 @@ public class HunterEntity extends PathfinderMob {
                 }
             }
             if (obstructionFound) return;
-        }
-    }
-
-    private void createBoneClimbStep(Player target) {
-        Vec3 toward = target.position().subtract(position());
-        Vec3 horizontal = new Vec3(toward.x, 0.0D, toward.z);
-        if (horizontal.lengthSqr() < 1.0E-5D) return;
-        horizontal = horizontal.normalize();
-        int feetY = (int) Math.floor(getY());
-        double stepDistance = getBbWidth() * 0.5D + 0.65D;
-        BlockPos pos = BlockPos.containing(getX() + horizontal.x * stepDistance,
-                feetY, getZ() + horizontal.z * stepDistance);
-        if (level().getBlockEntity(pos) != null || temporaryBoneWall.containsKey(pos)) return;
-        var state = level().getBlockState(pos);
-        if ((state.isAir() || state.getCollisionShape(level(), pos).isEmpty())
-                && level().setBlockAndUpdate(pos, Blocks.BONE_BLOCK.defaultBlockState())) {
-            temporaryBoneWall.put(pos.immutable(), state);
         }
     }
 
