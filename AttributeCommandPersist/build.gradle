@@ -1,0 +1,34 @@
+plugins {
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+}
+
+version = '1.0.0'
+group = 'com.jamesrenrold.attributecommandpersist'
+
+base {
+    archivesName = 'attribute-command-persist-1.20.1'
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+minecraft {
+    mappings channel: 'official', version: '1.20.1'
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.20.1-47.4.15'
+}
+
+tasks.named('jar', Jar).configure {
+    manifest {
+        attributes([
+                'Specification-Title'     : 'attributecommandpersist',
+                'Specification-Vendor'    : 'jamesrenrold-lab',
+                'Specification-Version'   : '1',
+                'Implementation-Title'    : project.name,
+                'Implementation-Version'  : project.version,
+                'Implementation-Vendor'   : 'jamesrenrold-lab'
+        ])
+    }
+    finalizedBy 'reobfJar'
+}

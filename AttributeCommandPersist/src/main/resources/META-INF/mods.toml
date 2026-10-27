@@ -1,0 +1,24 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="attributecommandpersist"
+version="1.0.0"
+displayName="Attribute Command Persistence"
+authors="jamesrenrold-lab"
+description='''Preserves manual attribute base values and permanent modifiers across death, without carrying temporary effect modifiers.'''
+
+[[dependencies.attributecommandpersist]]
+modId="forge"
+mandatory=true
+versionRange="[47,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.attributecommandpersist]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.21)"
+ordering="NONE"
+side="BOTH"

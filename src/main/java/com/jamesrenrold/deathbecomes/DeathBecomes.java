@@ -10,10 +10,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
-import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.player.Player;
@@ -35,7 +33,6 @@ import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.registries.RegistryObject;
 
-import java.lang.reflect.Method;
 import java.util.UUID;
 import java.util.Locale;
 
@@ -43,7 +40,6 @@ import java.util.Locale;
 public class DeathBecomes {
     public static final String MOD_ID = "deathbecomes";
     public static final String HEAL_LOCK_KEY = "DeathBecomesHealLockedUntil";
-    public static final String MANA_DEBUFF_KEY = "DeathBecomesManaDebuffUntil";
     private static final UUID MAX_MANA_DEBUFF_ID = UUID.fromString("d3747d07-1dc4-4d93-92a0-dc063a672860");
     private static final UUID MANA_REGEN_DEBUFF_ID = UUID.fromString("c90bab70-f641-4d9a-9aa6-3e3d79906659");
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, MOD_ID);
@@ -125,12 +121,9 @@ public class DeathBecomes {
             data.remove(key);
         }
 
-        long manaDebuffUntil = data.getLong(MANA_DEBUFF_KEY);
-        if (manaDebuffUntil > event.player.level().getGameTime()) {
-            ensureManaDebuff(event.player);
-        } else if (manaDebuffUntil != 0L) {
+        if (data.contains("DeathBecomesManaDebuffUntil")) {
             removeManaDebuff(event.player);
-            data.remove(MANA_DEBUFF_KEY);
+            data.remove("DeathBecomesManaDebuffUntil");
         }
 
         if (isInHunterChase(event.player) && event.player.isFallFlying()) {
@@ -171,29 +164,6 @@ public class DeathBecomes {
                 player.getBoundingBox().inflate(128.0D), hunter -> hunter.restrictsEscapeAbilities(player)).isEmpty();
     }
 
-    public static void applyManaDebuff(Player player) {
-        long now = player.level().getGameTime();
-        long oldExpiry = player.getPersistentData().getLong(MANA_DEBUFF_KEY);
-        player.getPersistentData().putLong(MANA_DEBUFF_KEY, now + 15L * 60L * 20L);
-        ensureManaDebuff(player);
-        if (oldExpiry <= now) halveCurrentMana(player);
-    }
-
-    private static void ensureManaDebuff(Player player) {
-        if (!ModList.get().isLoaded("irons_spellbooks")) return;
-        addHalfModifier(player, "max_mana", MAX_MANA_DEBUFF_ID, "Death Becomes mana capacity debuff");
-        addHalfModifier(player, "mana_regen", MANA_REGEN_DEBUFF_ID, "Death Becomes mana regeneration debuff");
-    }
-
-    private static void addHalfModifier(Player player, String attributePath, UUID id, String name) {
-        Attribute attribute = ForgeRegistries.ATTRIBUTES.getValue(new ResourceLocation("irons_spellbooks", attributePath));
-        if (attribute == null) return;
-        AttributeInstance instance = player.getAttribute(attribute);
-        if (instance != null && instance.getModifier(id) == null) {
-            instance.addTransientModifier(new AttributeModifier(id, name, -0.5D, AttributeModifier.Operation.MULTIPLY_TOTAL));
-        }
-    }
-
     private static void removeManaDebuff(Player player) {
         if (!ModList.get().isLoaded("irons_spellbooks")) return;
         removeModifier(player, "max_mana", MAX_MANA_DEBUFF_ID);
@@ -206,25 +176,12 @@ public class DeathBecomes {
         if (instance != null) instance.removeModifier(id);
     }
 
-    private static void halveCurrentMana(Player player) {
-        if (!ModList.get().isLoaded("irons_spellbooks")) return;
-        try {
-            Class<?> magicDataClass = Class.forName("io.redspace.ironsspellbooks.api.magic.MagicData");
-            Method getMagicData = magicDataClass.getMethod("getPlayerMagicData", LivingEntity.class);
-            Object magicData = getMagicData.invoke(null, player);
-            float mana = ((Number) magicDataClass.getMethod("getMana").invoke(magicData)).floatValue();
-            magicDataClass.getMethod("setMana", float.class).invoke(magicData, mana * 0.5F);
-        } catch (ReflectiveOperationException ignored) {
-            // The optional mana integration is unavailable in this Iron's Spells version.
-        }
-    }
-
     private static void onPlayerClone(PlayerEvent.Clone event) {
         if (!event.isWasDeath()) return;
         var oldData = event.getOriginal().getPersistentData();
         var newData = event.getEntity().getPersistentData();
         String[] keys = {com.jamesrenrold.deathbecomes.item.HeartFragmentItem.HEART_COUNT_KEY,
-                MANA_DEBUFF_KEY, HEAL_LOCK_KEY, "DeathBecomesPendingEffectsAt"};
+                HEAL_LOCK_KEY, "DeathBecomesPendingEffectsAt"};
         for (String key : keys) {
             if (oldData.contains(key)) newData.put(key, oldData.get(key).copy());
         }
