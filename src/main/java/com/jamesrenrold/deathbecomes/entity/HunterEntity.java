@@ -326,7 +326,6 @@ public class HunterEntity extends PathfinderMob {
         counterWindowTicks = 80;
         captureStartedAt = level().getGameTime();
         target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 8L * 20L);
-        DeathBecomes.applyManaDebuff(target);
         target.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN, 4 * 20, 4));
         target.setSprinting(false);
         target.setDeltaMovement(Vec3.ZERO);
@@ -351,7 +350,6 @@ public class HunterEntity extends PathfinderMob {
                 stolenExperience += xpToSteal;
             }
         }
-        DeathBecomes.applyManaDebuff(target);
         target.getPersistentData().putLong(DeathBecomes.HEAL_LOCK_KEY, captureStartedAt + 12L * 20L);
         getNavigation().stop();
         target.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.WEAKNESS, 12 * 20, 4));
