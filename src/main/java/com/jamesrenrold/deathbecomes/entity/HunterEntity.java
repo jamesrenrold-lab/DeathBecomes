@@ -296,6 +296,10 @@ public class HunterEntity extends PathfinderMob {
         setInvisible(false);
         setInvulnerable(false);
         setTarget(target);
+        MobEffect blackout = ForgeRegistries.MOB_EFFECTS.getValue(new net.minecraft.resources.ResourceLocation("traveloptics", "blackout"));
+        if (blackout != null) {
+            target.addEffect(new MobEffectInstance(blackout, CHASE_DURATION_TICKS, 0));
+        }
         getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(0.26D);
         counterRecoveryTicks = 0;
         navigationStuckTicks = 0;
@@ -657,6 +661,10 @@ public class HunterEntity extends PathfinderMob {
 
     private void stopMusic() {
         Player target = getHuntTarget();
+        if (target != null) {
+            MobEffect blackout = ForgeRegistries.MOB_EFFECTS.getValue(new net.minecraft.resources.ResourceLocation("traveloptics", "blackout"));
+            if (blackout != null) target.removeEffect(blackout);
+        }
         if (target instanceof ServerPlayer serverPlayer) {
             DeathBecomesNetwork.sendChaseMusic(serverPlayer, false);
             DeathBecomesNetwork.sendChaseTimer(serverPlayer, 0);
