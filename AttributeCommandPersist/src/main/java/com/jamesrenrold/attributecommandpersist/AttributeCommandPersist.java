@@ -23,6 +23,10 @@ public final class AttributeCommandPersist {
 
         Player original = event.getOriginal();
         Player replacement = event.getEntity();
+
+        // Effects and their temporary attribute modifiers should not survive death.
+        replacement.removeAllEffects();
+
         for (Attribute attribute : ForgeRegistries.ATTRIBUTES.getValues()) {
             AttributeInstance oldInstance = original.getAttribute(attribute);
             AttributeInstance newInstance = replacement.getAttribute(attribute);
