@@ -306,7 +306,7 @@ public class HunterEntity extends PathfinderMob {
         navigationCheckX = getX();
         navigationCheckY = getY();
         navigationCheckZ = getZ();
-        setGlowingTag(true);
+        applyRedGlow();
         entityData.set(SHAKE, true);
         shakeTicks = 0;
         if (target instanceof ServerPlayer serverPlayer) {
@@ -624,7 +624,7 @@ public class HunterEntity extends PathfinderMob {
         setYRot(yaw);
         setYBodyRot(yaw);
         setYHeadRot(yaw);
-        setGlowingTag(false);
+        removeRedGlow();
         setTarget(null);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
         if (speed != null) speed.setBaseValue(0.20D);
@@ -688,9 +688,33 @@ public class HunterEntity extends PathfinderMob {
     }
 
 
+    private void applyRedGlow() {
+        if (!(level() instanceof ServerLevel serverLevel)) return;
+        var scoreboard = serverLevel.getScoreboard();
+        var team = scoreboard.getTeam("deathbecomes_hunter_glow");
+        if (team == null) {
+            team = scoreboard.addPlayerTeam("deathbecomes_hunter_glow");
+        }
+        team.setColor(ChatFormatting.RED);
+        scoreboard.addPlayerToTeam(getScoreboardName(), team);
+        setGlowingTag(true);
+    }
+
+    private void removeRedGlow() {
+        if (level() instanceof ServerLevel serverLevel) {
+            var scoreboard = serverLevel.getScoreboard();
+            var team = scoreboard.getTeam("deathbecomes_hunter_glow");
+            if (team != null) {
+                scoreboard.removePlayerFromTeam(getScoreboardName(), team);
+            }
+        }
+        setGlowingTag(false);
+    }
+
     @Override
     public void remove(RemovalReason reason) {
         removeTemporaryBoneWall();
+        removeRedGlow();
         super.remove(reason);
     }
 
