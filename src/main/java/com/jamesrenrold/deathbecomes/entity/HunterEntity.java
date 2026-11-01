@@ -691,7 +691,7 @@ public class HunterEntity extends PathfinderMob {
     private void applyRedGlow() {
         if (!(level() instanceof ServerLevel serverLevel)) return;
         var scoreboard = serverLevel.getScoreboard();
-        var team = scoreboard.getTeam("deathbecomes_hunter_glow");
+        var team = scoreboard.getPlayerTeam("deathbecomes_hunter_glow");
         if (team == null) {
             team = scoreboard.addPlayerTeam("deathbecomes_hunter_glow");
         }
@@ -703,7 +703,7 @@ public class HunterEntity extends PathfinderMob {
     private void removeRedGlow() {
         if (level() instanceof ServerLevel serverLevel) {
             var scoreboard = serverLevel.getScoreboard();
-            var team = scoreboard.getTeam("deathbecomes_hunter_glow");
+            var team = scoreboard.getPlayerTeam("deathbecomes_hunter_glow");
             if (team != null) {
                 scoreboard.removePlayerFromTeam(getScoreboardName(), team);
             }
