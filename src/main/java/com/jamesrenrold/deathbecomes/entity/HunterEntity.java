@@ -306,7 +306,7 @@ public class HunterEntity extends PathfinderMob {
         navigationCheckX = getX();
         navigationCheckY = getY();
         navigationCheckZ = getZ();
-        setGlowingTag(false);
+        setGlowingTag(true);
         entityData.set(SHAKE, true);
         shakeTicks = 0;
         if (target instanceof ServerPlayer serverPlayer) {
@@ -624,6 +624,7 @@ public class HunterEntity extends PathfinderMob {
         setYRot(yaw);
         setYBodyRot(yaw);
         setYHeadRot(yaw);
+        setGlowingTag(false);
         setTarget(null);
         var speed = getAttribute(Attributes.MOVEMENT_SPEED);
         if (speed != null) speed.setBaseValue(0.20D);
